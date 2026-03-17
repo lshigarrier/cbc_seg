@@ -1,0 +1,13 @@
+# Models / weights
+*.pth
+*.pt
+
+# Python
+__pycache__/
+*.egg-info/
+
+# IDE
+.idea/
+
+# Outputs
+output/
