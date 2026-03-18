@@ -74,7 +74,7 @@ class ImageDataset(Dataset):
 
         patches = torch.cat(patches, dim=0)
 
-        return img, name, patches, tuple(boxes)
+        return img, name, self.transform(patches), tuple(boxes)
 
     def stitch(self, patches: torch.Tensor, boxes: tuple[tuple[int, int, int, int], ...]) -> list[torch.Tensor]:
         # patches : (num_images * patch_per_img, channels, patch_size, patch_size)

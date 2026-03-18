@@ -23,32 +23,39 @@ class_mapping:
     autre: 18
 # define priority: lowest priority first, highest priority last
 priority_list:
-- marquage
-- faiencage
-- remontee de fines
-- depot de gomme
-- jonction
-- ressuage
-- joint
-- defaut de joint
-- desenrobage
-- fissure souple reparee
-- fissure rigide reparee
-- fissure souple
-- fissure rigide
-- depart de materiaux rigide
-- depart de materiaux souple
-- objet
-- vegetation
-- autre
-dilation_kernel_size: 5
+    - marquage
+    - faiencage
+    - remontee de fines
+    - depot de gomme
+    - jonction
+    - ressuage
+    - joint
+    - defaut de joint
+    - desenrobage
+    - fissure souple reparee
+    - fissure rigide reparee
+    - fissure souple
+    - fissure rigide
+    - depart de materiaux rigide
+    - depart de materiaux souple
+    - objet
+    - vegetation
+    - autre
+boundary_settings:
+    default:
+        outside: 2
+        inside: 1
+    fissure souple:
+        outside: 1
+        inside: 2
 ignore_index: 255
 # ================================================================================
 ## train
+seed: 42
 name: DLV3P_MIT_B2_1
 save_dir: C:/Users/Admin/Code/cbc_seg/output/
 # dataset
-num_classes: 18
+num_classes: 19
 patch_per_row: 4
 patch_per_col: 2
 patch_size: 512
@@ -58,11 +65,42 @@ batch_size: 1
 num_workers: 4
 # training
 use_gpu: true
+save_onnx: false
+deterministic: false
 lr: 3.e-4
 eta_min: 1.e-6
 weight_decay: 1.e-4
 tversky_alpha: 0.3  # Forgiving to thick boundaries (False Positives)
 tversky_beta: 0.7  # Harsh on gaps (False Negatives)
-max_epochs: 1
+max_epochs: 100
 accumulate_grad_batches: 4
-log_every_n_steps: 100
+log_every_n_steps: 10
+# ================================================================================
+## inference
+eval_data_dir: C:/Users/Admin/Code/cbc_zoo/examples/example_images/
+version: version_0
+ckpt: epoch=98.ckpt
+eval_patch_per_row: 7
+eval_patch_per_col: 3
+eval_patch_size: 512
+eval_patch_overlap: 0.5
+colors:
+    - [0, 0, 0]
+    - [255, 0, 0]
+    - [0, 255, 0]
+    - [0, 0, 255]
+    - [255, 255, 0]
+    - [255, 0, 255]
+    - [0, 255, 255]
+    - [255, 128, 0]
+    - [255, 0, 128]
+    - [0, 255, 128]
+    - [128, 255, 0]
+    - [128, 0, 255]
+    - [0, 128, 255]
+    - [128, 0, 0]
+    - [0, 128, 0]
+    - [0, 0, 128]
+    - [128, 128, 0]
+    - [128, 0, 128]
+    - [0, 128, 128]

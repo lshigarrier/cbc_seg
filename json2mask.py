@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 from pathlib import Path
 
-from utils import get_conf
+from utils import get_conf, logging_conf
 
 
 def get_priority(shape, priority_list):
@@ -30,26 +30,41 @@ def process_json_to_mask(conf, json_path, logger):
     shapes = data.get('shapes', [])
     shapes.sort(key=lambda s: get_priority(s, conf.priority_list))
 
-    kernel = np.ones((conf.dilation_kernel_size, conf.dilation_kernel_size), np.uint8)
-
     for shape in shapes:
+        label = shape['label']
         points = np.array(shape['points'], dtype=np.int32)
+
+        # Get the boundary settings for this specific class
+        b_settings = conf.boundary_settings.get(label, conf.boundary_settings.get("default"))
+        out_pixels = b_settings["outside"]
+        in_pixels = b_settings["inside"]
 
         # Create a temporary blank canvas for this specific polygon
         temp_canvas = np.zeros((img_height, img_width), dtype=np.uint8)
         cv2.fillPoly(temp_canvas, [points], 1)
 
-        # 1. Create the Soft Boundary (Halo)
-        # Dilate the polygon to make it thicker
-        dilated_canvas = cv2.dilate(temp_canvas, kernel, iterations=1)
+        # 1. Calculate Outside Area (Dilate)
+        if out_pixels > 0:
+            # Kernel size: 2 * radius + 1 ensures the center anchor is exact
+            k_out = np.ones((2 * out_pixels + 1, 2 * out_pixels + 1), np.uint8)
+            dilated = cv2.dilate(temp_canvas, k_out, iterations=1)
+        else:
+            dilated = temp_canvas.copy()  # No outside halo
 
-        # Apply the 255 halo to the final mask where the dilated canvas is 1
-        final_mask[dilated_canvas == 1] = conf.ignore_index
+        # 2. Calculate Inside Area (Erode)
+        if in_pixels > 0:
+            k_in = np.ones((2 * in_pixels + 1, 2 * in_pixels + 1), np.uint8)
+            eroded = cv2.erode(temp_canvas, k_in, iterations=1)
+        else:
+            eroded = temp_canvas.copy()  # No inside halo
 
-        # 2. Draw the actual class core
-        # Overwrite the exact polygon area with the actual class ID
-        label = shape['label']
-        final_mask[temp_canvas == 1] = conf.class_mapping[label]
+        # 3. Draw the Masks
+        # First, apply the ignore_index to the entire dilated area (Core + Outside + Inside boundary)
+        final_mask[dilated == 1] = conf.ignore_index
+
+        # Second, overwrite the shrunken core with the actual class ID
+        # Because it's eroded, it leaves the ignore_index behind on the inner boundary!
+        final_mask[eroded == 1] = conf.class_mapping[label]
 
     # Save the mask
     out_path = json_path.with_name(f"{json_path.stem}_mask.png")
@@ -57,6 +72,7 @@ def process_json_to_mask(conf, json_path, logger):
 
 
 def main():
+    logging_conf()
     logger = logging.getLogger('J2M')
     conf = get_conf(logger)
 

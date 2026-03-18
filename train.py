@@ -3,15 +3,12 @@ import pytorch_lightning as pl
 import segmentation_models_pytorch as smp
 import torch
 from torch.utils.data import DataLoader
-from pytorch_lightning.callbacks import ModelCheckpoint, DeviceStatsMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
+from pathlib import Path
 
-from utils import get_conf, RuntimeTracker
+from utils import get_conf, logging_conf, pytorch_perf, RuntimeTracker
 from data import ImageMaskDataset, image_mask_collate_fn
-
-logging.basicConfig(level=logging.DEBUG, format='%(name)s:%(message)s')
-torch.set_float32_matmul_precision('high')
-torch.backends.cudnn.benchmark = True
 
 
 class CBCSeg(pl.LightningModule):
@@ -53,10 +50,10 @@ class CBCSeg(pl.LightningModule):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        images, masks = batch
+        patches, masks = batch
         # Masks shape should be (B, H, W) with class indices (0 to num_classes-1, or 255)
 
-        logits = self.forward(images)
+        logits = self.forward(patches)
 
         # Combine losses
         loss_focal = self.focal_loss(logits, masks)
@@ -64,7 +61,15 @@ class CBCSeg(pl.LightningModule):
         total_loss = loss_focal + loss_tversky
 
         # Log the loss
-        self.log(f"train_loss", total_loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(
+            f"train_loss",
+            total_loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=patches.shape[0]
+        )
+
         return total_loss
 
     def configure_optimizers(self):
@@ -92,8 +97,11 @@ class CBCSeg(pl.LightningModule):
 
 
 def main():
+    logging_conf()
+    pytorch_perf()
     main_logger = logging.getLogger('Train')
     conf = get_conf(main_logger)
+    pl.seed_everything(conf.seed, workers=True)
 
     model = CBCSeg(
         num_classes=conf.num_classes,
@@ -108,8 +116,6 @@ def main():
         conf.patch_per_col,
         conf.patch_size,
         conf.patch_overlap)
-
-    main_logger.info(f'Training on {len(train_set)} annotated images')
 
     train_loader = DataLoader(
         train_set,
@@ -134,29 +140,46 @@ def main():
 
     trainer = pl.Trainer(
         logger=logger,
-        callbacks=[checkpoint_callback, RuntimeTracker(), DeviceStatsMonitor()],
+        callbacks=[checkpoint_callback, RuntimeTracker()],
         max_epochs=conf.max_epochs,
         accelerator="gpu" if conf.use_gpu else "cpu",
         devices=1,
         precision="16-mixed",  # Automatic Mixed Precision (AMP)
         accumulate_grad_batches=conf.accumulate_grad_batches,  # Accumulate gradients over 4 batches
-        log_every_n_steps=conf.log_every_n_steps  # Control logging verbosity
+        log_every_n_steps=conf.log_every_n_steps,  # Control logging verbosity
+        deterministic=conf.deterministic
     )
 
-    # model = torch.compile(model)
+    main_logger.info('-' * 70)
+    main_logger.info(f'Training on {len(train_set)} annotated images')
     trainer.fit(model, train_loader)
 
-    '''
-    # Load your trained model
-    model = CBCSeg.load_from_checkpoint("path/to/best_model.ckpt")
-    model.eval()
+    if conf.save_onnx:
+        # Load your trained model
+        model = CBCSeg.load_from_checkpoint(checkpoint_callback.best_model_path)
+        model.eval()
 
-    # Create a dummy input tensor matching your patch size
-    dummy_input = torch.randn(1, 3, conf.path_size, conf.path_size)
+        dummy_input = torch.randn(1, 3, conf.patch_size, conf.patch_size)
 
-    # Export to ONNX
-    model.to_onnx("cbc_seg.onnx", dummy_input, export_params=True)
-    '''
+        version_dir = trainer.logger.log_dir
+        onnx_file_path = Path(version_dir) / 'cbc_seg.onnx'
+
+        # Export to ONNX
+        model.to_onnx(
+            onnx_file_path,
+            dummy_input,
+            export_params=True,
+            opset_version=14,  # Good default for modern PyTorch/ONNX
+            input_names=['input'],
+            output_names=['output']
+        )
+        main_logger.info("Training and ONNX export complete!")
+
+    else:
+        main_logger.info("Training complete!")
+
+    peak_memory_gb = torch.cuda.max_memory_allocated() / 1024 ** 3
+    main_logger.info(f'Peak GPU memory allocated: {peak_memory_gb:.2f} GB')
 
 
 if __name__ == "__main__":
