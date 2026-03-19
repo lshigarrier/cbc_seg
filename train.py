@@ -8,7 +8,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from pathlib import Path
 
 from utils import get_conf, logging_conf, pytorch_perf, RuntimeTracker
-from data import ImageMaskDataset, image_mask_collate_fn
+from data import TrainImageMaskDataset, image_mask_collate_fn
 
 
 class CBCSeg(pl.LightningModule):
@@ -110,12 +110,17 @@ def main():
         weight_decay=conf.weight_decay,
         ignore_index=conf.ignore_index)
 
-    train_set = ImageMaskDataset(
+    train_set = TrainImageMaskDataset(
         conf.data_dir,
-        conf.patch_per_row,
-        conf.patch_per_col,
-        conf.patch_size,
-        conf.patch_overlap)
+        conf.patch_per_img,
+        conf.patch_size
+    )
+
+    class_counts = train_set.get_class_image_counts(conf.class_mapping, conf.ignore_index)
+    main_logger.info("Number of images containing each class:")
+    for cls_name, count in class_counts.items():
+        main_logger.info(f"  - {cls_name}: {count}")
+    main_logger.info('-' * 70)
 
     train_loader = DataLoader(
         train_set,
@@ -145,8 +150,8 @@ def main():
         accelerator="gpu" if conf.use_gpu else "cpu",
         devices=1,
         precision="16-mixed",  # Automatic Mixed Precision (AMP)
-        accumulate_grad_batches=conf.accumulate_grad_batches,  # Accumulate gradients over 4 batches
-        log_every_n_steps=conf.log_every_n_steps,  # Control logging verbosity
+        accumulate_grad_batches=conf.accumulate_grad_batches,
+        log_every_n_steps=conf.log_every_n_steps,
         deterministic=conf.deterministic
     )
 

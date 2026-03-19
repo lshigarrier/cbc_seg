@@ -87,7 +87,7 @@ def main():
     conf = get_conf(logger)
     pl.seed_everything(conf.seed, workers=True)
 
-    output_dir = Path(conf.save_dir) / conf.name / conf.version / 'result'
+    output_dir = Path(conf.save_dir) / conf.name / conf.version / conf.result_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     ckpt_path = Path(conf.save_dir) / conf.name / conf.version / 'checkpoints' / conf.ckpt
@@ -97,10 +97,10 @@ def main():
 
     dataset = ImageDataset(
         conf.eval_data_dir,
-        patch_per_row=conf.eval_patch_per_row,
-        patch_per_col=conf.eval_patch_per_col,
-        patch_size=conf.eval_patch_size,
-        patch_overlap=conf.eval_patch_overlap
+        patch_per_row=conf.patch_per_row,
+        patch_per_col=conf.patch_per_col,
+        patch_size=conf.patch_size,
+        patch_overlap=conf.patch_overlap
     )
 
     dataloader = DataLoader(
@@ -122,6 +122,7 @@ def main():
     )
 
     trainer = pl.Trainer(
+        logger=False,
         accelerator="gpu" if conf.use_gpu else "cpu",
         devices=1,
         precision="16-mixed",

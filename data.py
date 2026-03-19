@@ -1,11 +1,12 @@
 import math
 import torch
 import torch.nn.functional as F
-import torchvision.transforms.v2 as transforms
 from torch.utils.data import Dataset
 from torchvision import tv_tensors
 from torchvision.io import read_image
 from pathlib import Path
+
+from augmentation import get_train_transform, get_test_transform
 
 
 class ImageDataset(Dataset):
@@ -26,10 +27,7 @@ class ImageDataset(Dataset):
         self.patch_size = patch_size
         assert 0.0 <= patch_overlap < 1.0, 'patch_overlap must be in [0, 1)'
         self.patch_overlap = patch_overlap
-        self.transform = transforms.Compose([
-            transforms.ToDtype(torch.float32, scale=True),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
+        self.transform = get_test_transform()
 
     def __len__(self) -> int:
         return len(self.paths)
@@ -143,10 +141,10 @@ class ImageMaskDataset(ImageDataset):
     def __init__(
             self,
             folder: Path | str,
-            patch_per_row: int = 7,
-            patch_per_col:int = 3,
+            patch_per_row: int = 4,
+            patch_per_col:int = 2,
             patch_size: int = 1024,
-            patch_overlap: float = 0.5
+            patch_overlap: float = 0.
     ) -> None:
         super().__init__(
             folder,
@@ -156,6 +154,28 @@ class ImageMaskDataset(ImageDataset):
             patch_overlap
         )
         self.paths = sorted(Path(folder).rglob('*_mask.png'))
+
+    def get_class_image_counts(self, class_mapping: dict, ignore_index: int = 255) -> dict:
+        """
+        Calculates how many annotated images contain each class.
+        """
+        # Initialize counts class mapping names
+        counts = {cls_name: 0 for cls_name in class_mapping.keys()}
+        # Reverse mapping to get class names from indices
+        index_to_name = {v: k for k, v in class_mapping.items()}
+
+        for path in self.paths:
+            mask = read_image(str(path))
+            # Find unique values in the mask tensor
+            unique_classes = torch.unique(mask).tolist()
+
+            for cls_idx in unique_classes:
+                if cls_idx == ignore_index:
+                    continue
+                if cls_idx in index_to_name:
+                    counts[index_to_name[cls_idx]] += 1
+
+        return counts
 
     def __getitem__(
             self,
@@ -215,3 +235,39 @@ def image_mask_collate_fn(batch: list) ->  tuple[torch.Tensor, torch.Tensor]:
     all_patches = torch.cat([item[0] for item in batch], dim=0)
     all_masks = torch.cat([item[1] for item in batch], dim=0)
     return all_patches, all_masks
+
+
+class TrainImageMaskDataset(ImageMaskDataset):
+    def __init__(
+            self,
+            folder: Path | str,
+            patch_per_img: int = 4,
+            patch_size: int = 1024,
+    ) -> None:
+        super().__init__(folder=folder, patch_size=patch_size)
+        self.patch_per_img = patch_per_img
+        self.transform = get_train_transform(patch_size)
+
+    def __getitem__(self, item: int) -> tuple[torch.Tensor, torch.Tensor]:
+        path = self.paths[item]
+        mask = read_image(str(path))
+        img = read_image(str(path.with_name(f"{path.stem[:-5]}.jpg")))
+
+        img = tv_tensors.Image(img)
+        mask = tv_tensors.Mask(mask.squeeze(0))  # [H, W]
+
+        patches = []
+        mask_patches = []
+
+        # Generate N independent random crops from the same full image
+        for _ in range(self.patch_per_img):
+            p, m = self.transform(img, mask)
+            patches.append(p)
+            mask_patches.append(m)
+
+        # Stack them into [patch_per_img, C, H, W]
+        patches = torch.stack(patches, dim=0)
+        mask_patches = torch.stack(mask_patches, dim=0)
+
+        # Return as standard tensors
+        return patches.as_subclass(torch.Tensor), mask_patches.as_subclass(torch.Tensor).long()

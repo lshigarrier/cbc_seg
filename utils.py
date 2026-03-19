@@ -2,6 +2,7 @@ import sys
 import yaml
 import time
 import logging
+import re
 import torch
 from pytorch_lightning.callbacks import Callback
 from types import SimpleNamespace
@@ -10,18 +11,50 @@ from pathlib import Path
 
 def get_conf(logger):
     filename = sys.argv[1]
-    config_path = Path("config") / f"{filename}.yaml"
+    config_path = Path('.') / Path('config') / f'{filename}.yaml'
     conf = yaml.safe_load(config_path.read_text())
     conf = SimpleNamespace(**conf)
     logger.info('-' * 70)
     for key, value in vars(conf).items():
-        logger.info(f"{key} : {value}")
+        logger.info(f'{key} : {value}')
     logger.info('-' * 70)
     return conf
 
 
+class FileLogger:
+    def __init__(self, original_stream, filepath):
+        self.terminal = original_stream
+        self.log_file = open(filepath, "a", encoding="utf-8")
+        self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+    def write(self, message):
+        self.terminal.write(message)
+        clean_message = self.ansi_escape.sub('', message)
+        self.log_file.write(clean_message)
+
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+
+    def isatty(self):
+        if hasattr(self.terminal, 'isatty'):
+            return self.terminal.isatty()
+        return False
+
+
 def logging_conf():
-    logging.basicConfig(level=logging.INFO, format='%(name)s:%(message)s')
+    if len(sys.argv) >= 3:
+        log_path = Path('.') / f'{sys.argv[2]}.txt'
+        open(log_path, "w").close()
+        sys.stdout = FileLogger(sys.stdout, log_path)
+        sys.stderr = FileLogger(sys.stderr, log_path)
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    for logger in logging.root.manager.loggerDict.values():
+        if isinstance(logger, logging.Logger):
+            for handler in logger.handlers:
+                # If the handler prints to a terminal stream, overwrite it
+                if isinstance(handler, logging.StreamHandler):
+                    handler.stream = sys.stdout
 
 
 def pytorch_perf():
