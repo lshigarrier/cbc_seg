@@ -49,12 +49,13 @@ def logging_conf():
         sys.stdout = FileLogger(sys.stdout, log_path)
         sys.stderr = FileLogger(sys.stderr, log_path)
     logging.basicConfig(level=logging.INFO, format='%(message)s')
-    for logger in logging.root.manager.loggerDict.values():
-        if isinstance(logger, logging.Logger):
-            for handler in logger.handlers:
-                # If the handler prints to a terminal stream, overwrite it
-                if isinstance(handler, logging.StreamHandler):
-                    handler.stream = sys.stdout
+    if len(sys.argv) >= 3:
+        for logger in logging.root.manager.loggerDict.values():
+            if isinstance(logger, logging.Logger):
+                for handler in logger.handlers:
+                    # If the handler prints to a terminal stream, overwrite it
+                    if isinstance(handler, logging.StreamHandler):
+                        handler.stream = sys.stdout
 
 
 def pytorch_perf():

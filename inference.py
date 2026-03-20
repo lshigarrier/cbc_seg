@@ -2,15 +2,14 @@ import logging
 import torch
 import numpy as np
 import pytorch_lightning as pl
-from torch.utils.data import DataLoader
 from pathlib import Path
-from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 from utils import get_conf, logging_conf, pytorch_perf, CustomTimer
-from data import ImageDataset, image_collate_fn
-from train import CBCSeg
+from data.data import ImageDataModule
+# from models.deeplabv3plus import DeepLabV3Plus
+from models.pidnet import PIDNet
 
 
 def get_colormap(conf_colors):
@@ -43,43 +42,6 @@ def save_legend(class_mapping, cmap, output_dir):
     plt.close()
 
 
-class CBCInferenceWrapper(CBCSeg):
-    """Subclass CBCSeg just to add the predict step for this script"""
-
-    def __init__(self, *args, output_dir=None, dataset=None, cmap=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.output_dir = output_dir
-        self.dataset = dataset
-        self.cmap = cmap
-
-    def save_hyperparameters(self, *args, **kwargs):
-        pass
-
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        images, names, patches, boxes = batch
-
-        # 1. Forward pass
-        outputs = self(patches)
-
-        # 2. Stitching
-        logits = self.dataset.stitch(outputs, boxes)
-
-        # 3. Processing & Saving
-        for b in range(len(images)):
-            mask_idx = torch.argmax(logits[b], dim=0).cpu().numpy()
-            mask_rgba = self.cmap[mask_idx]
-
-            mask_a = mask_rgba[:, :, 3:].astype(np.float32) / 255.0
-            mask_rgb = mask_rgba[:, :, :3].astype(np.float32)
-
-            image = images[b].cpu().numpy().transpose(1, 2, 0).astype(np.float32)
-            overlay = image * (1 - mask_a * 0.5) + mask_rgb * (mask_a * 0.5)
-            overlay = overlay.clip(0, 255)
-
-            Image.fromarray(mask_rgb.astype(np.uint8)).save(self.output_dir / f'{names[b]}_mask.png')
-            Image.fromarray(overlay.astype(np.uint8)).save(self.output_dir / f'{names[b]}_over.png')
-
-
 def main():
     logging_conf()
     pytorch_perf()
@@ -95,29 +57,20 @@ def main():
     cmap = get_colormap(conf.colors)
     save_legend(conf.class_mapping, cmap, output_dir)
 
-    dataset = ImageDataset(
-        conf.eval_data_dir,
-        patch_per_row=conf.patch_per_row,
-        patch_per_col=conf.patch_per_col,
-        patch_size=conf.patch_size,
-        patch_overlap=conf.patch_overlap
-    )
+    datamodule = ImageDataModule(conf, logger)
 
-    dataloader = DataLoader(
-        dataset,
-        batch_size=1,
-        shuffle=False,
-        num_workers=conf.num_workers,
-        persistent_workers=True,
-        pin_memory=conf.use_gpu,
-        collate_fn=image_collate_fn
-    )
-
-    # Load model the wrapper that includes the predict_step
-    model = CBCInferenceWrapper.load_from_checkpoint(
+    '''model = DeepLabV3Plus.load_from_checkpoint(
         ckpt_path,
+        num_classes=conf.num_classes,
+        patch_per_img=conf.patch_per_row*conf.patch_per_col,
         output_dir=output_dir,
-        dataset=dataset,
+        cmap=cmap
+    )'''
+    model = PIDNet.load_from_checkpoint(
+        ckpt_path,
+        num_classes=conf.num_classes,
+        patch_per_img=conf.patch_per_row*conf.patch_per_col,
+        output_dir=output_dir,
         cmap=cmap
     )
 
@@ -131,11 +84,9 @@ def main():
 
     timer = CustomTimer()
     timer.start()
-    logger.info('-' * 70)
-    logger.info(f'Inference on {len(dataset)} images')
-    trainer.predict(model, dataloaders=dataloader)
+    trainer.predict(model, datamodule=datamodule)
     logger.info(f'Predictions saved in {output_dir}')
-    timer.stop(logger, len(dataset))
+    timer.stop(logger, len(datamodule.predict_dataset))
 
     peak_memory_gb = torch.cuda.max_memory_allocated() / 1024 ** 3
     logger.info(f'Peak GPU memory allocated: {peak_memory_gb:.2f} GB')
