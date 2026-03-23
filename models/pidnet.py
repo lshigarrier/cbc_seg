@@ -97,7 +97,7 @@ class PIDNet(CBCSeg):
 
         # Since you use 255 for boundary dilation, we can extract the boundary target directly
         # 1.0 for boundary, 0.0 for non-boundary
-        boundary_targets = (masks == self.ignore_index).long()
+        boundary_targets = (masks == self.ignore_index).float()
 
         # MMSegmentation expects data in a specific dictionary format for training
         data = {
@@ -116,7 +116,8 @@ class PIDNet(CBCSeg):
         loss_dict = self.model(inputs=data['inputs'], data_samples=data['data_samples'], mode='loss')
 
         # Sum all losses (main, boundary, aux)
-        total_loss = sum(loss_dict.values())
+        # total_loss = sum(loss_dict.values())
+        total_loss, log_vars = self.model.parse_losses(loss_dict)
 
         # Log the loss
         self.log(

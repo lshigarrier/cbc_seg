@@ -5,6 +5,7 @@ import logging
 import re
 import torch
 from pytorch_lightning.callbacks import Callback
+from pytorch_lightning.loggers import TensorBoardLogger
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -113,3 +114,11 @@ class RuntimeTracker(Callback):
         pl_module.log("runtime/total_perf_counter_seconds", total_perf_count)
         pl_module.log("runtime/epoch_process_time_seconds", epoch_process_time)
         pl_module.log("runtime/total_process_time_seconds", total_process_time)
+
+
+class CleanTensorBoardLogger(TensorBoardLogger):
+    def log_hyperparams(self, params, *args, **kwargs):
+        pass
+
+    def save(self):
+        pass

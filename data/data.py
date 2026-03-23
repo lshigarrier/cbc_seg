@@ -62,7 +62,7 @@ class ImageDataset(Dataset):
 
                 patch = img[y1:y2, x1:x2, :]
                 patch = cv2.resize(patch, (self.patch_size, self.patch_size), interpolation=cv2.INTER_CUBIC)
-                patches.append(patch['image'])
+                patches.append(patch)
                 boxes.append((y1, y2, x1, x2))
 
         patches = np.stack(patches, axis=0)

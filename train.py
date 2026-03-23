@@ -2,10 +2,9 @@ import logging
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import TensorBoardLogger
 from pathlib import Path
 
-from utils import get_conf, logging_conf, pytorch_perf, RuntimeTracker
+from utils import get_conf, logging_conf, pytorch_perf, RuntimeTracker, CleanTensorBoardLogger
 from data.data import ImageDataModule
 # from models.deeplabv3plus import DeepLabV3Plus
 from models.pidnet import PIDNet
@@ -37,13 +36,13 @@ def main():
         ignore_index=conf.ignore_index
     )
 
-    logger = TensorBoardLogger(save_dir=conf.save_dir, name=conf.name)
+    logger = CleanTensorBoardLogger(save_dir=conf.save_dir, name=conf.name)
 
     checkpoint_callback = ModelCheckpoint(
         monitor="train_loss",
         mode="min",
-        save_top_k=1,
-        filename="{epoch:02d}"
+        filename="{epoch:03d}",
+        save_last=True
     )
 
     trainer = pl.Trainer(

@@ -70,7 +70,7 @@ eta_min: 1.e-6
 weight_decay: 1.e-4
 tversky_alpha: 0.3  # Forgiving to thick boundaries (False Positives)
 tversky_beta: 0.7  # Harsh on gaps (False Negatives)
-max_epochs: 2
+max_epochs: 200
 accumulate_grad_batches: 4
 log_every_n_steps: 10
 # ================================================================================
@@ -78,7 +78,7 @@ log_every_n_steps: 10
 eval_data_dir: C:/Users/Admin/Code/cbc_zoo/examples/example_images/
 version: version_0
 result_dir: result
-ckpt: epoch=98.ckpt
+ckpt: epoch=164.ckpt
 patch_per_row: 7
 patch_per_col: 3
 patch_overlap: 0.5
