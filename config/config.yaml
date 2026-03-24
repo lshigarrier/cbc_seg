@@ -1,59 +1,14 @@
+class_config: class_config
 # ================================================================================
 ## JSON to mask
 data_dir: C:/Users/Admin/Data/annotation/
-class_mapping:
-    background: 0
-    fissure souple: 1
-    fissure souple reparee: 2
-    depart de materiaux souple: 3
-    desenrobage: 4
-    remontee de fines: 5
-    ressuage: 6
-    depot de gomme: 7
-    fissure rigide: 8
-    fissure rigide reparee: 9
-    depart de materiaux rigide: 10
-    faiencage: 11
-    defaut de joint: 12
-    joint: 13
-    vegetation: 14
-    marquage: 15
-    jonction: 16
-    objet: 17
-    autre: 18
-# define priority: lowest priority first, highest priority last
-priority_list:
-    - marquage
-    - faiencage
-    - remontee de fines
-    - depot de gomme
-    - jonction
-    - ressuage
-    - joint
-    - defaut de joint
-    - desenrobage
-    - fissure souple reparee
-    - fissure rigide reparee
-    - fissure souple
-    - fissure rigide
-    - depart de materiaux rigide
-    - depart de materiaux souple
-    - objet
-    - vegetation
-    - autre
-boundary_settings:
-    default:
-        outside: 2
-        inside: 1
-    fissure souple:
-        outside: 1
-        inside: 2
 ignore_index: 255
 # ================================================================================
 ## train
 seed: 42
 name: pidnet_l  # deeplabv3+_mitb2
 save_dir: C:/Users/Admin/Code/cbc_seg/output/
+from_ckpt: true
 # dataset
 num_classes: 19
 patch_per_img: 4
@@ -68,37 +23,18 @@ deterministic: false
 lr: 3.e-4
 eta_min: 1.e-6
 weight_decay: 1.e-4
-tversky_alpha: 0.3  # Forgiving to thick boundaries (False Positives)
-tversky_beta: 0.7  # Harsh on gaps (False Negatives)
 max_epochs: 200
 accumulate_grad_batches: 4
 log_every_n_steps: 10
+# DeepLabV3+
+tversky_alpha: 0.3  # Forgiving to thick boundaries (False Positives)
+tversky_beta: 0.7  # Harsh on gaps (False Negatives)
 # ================================================================================
 ## inference
-eval_data_dir: C:/Users/Admin/Code/cbc_zoo/examples/example_images/
+eval_data_dir: C:/Users/Admin/Data/test_images/
 version: version_0
 result_dir: result
 ckpt: epoch=164.ckpt
 patch_per_row: 7
 patch_per_col: 3
 patch_overlap: 0.5
-colors:
-    - [0, 0, 0]
-    - [255, 0, 0]
-    - [0, 255, 0]
-    - [0, 0, 255]
-    - [255, 255, 0]
-    - [255, 0, 255]
-    - [0, 255, 255]
-    - [255, 128, 0]
-    - [255, 0, 128]
-    - [0, 255, 128]
-    - [128, 255, 0]
-    - [128, 0, 255]
-    - [0, 128, 255]
-    - [128, 0, 0]
-    - [0, 128, 0]
-    - [0, 0, 128]
-    - [128, 128, 0]
-    - [128, 0, 128]
-    - [0, 128, 128]

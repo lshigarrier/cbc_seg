@@ -114,9 +114,6 @@ class PIDNet(CBCSeg):
         # When calling forward with 'loss' mode, MMSegmentation automatically computes
         # the OhemCrossEntropy and Boundary losses defined in the config.
         loss_dict = self.model(inputs=data['inputs'], data_samples=data['data_samples'], mode='loss')
-
-        # Sum all losses (main, boundary, aux)
-        # total_loss = sum(loss_dict.values())
         total_loss, log_vars = self.model.parse_losses(loss_dict)
 
         # Log the loss

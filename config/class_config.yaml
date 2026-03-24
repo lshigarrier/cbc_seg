@@ -1,0 +1,71 @@
+# ================================================================================
+## JSON to mask
+class_mapping:
+    background: 0
+    fissure souple: 1
+    fissure souple reparee: 2
+    depart de materiaux souple: 3
+    desenrobage: 4
+    remontee de fines: 5
+    ressuage: 6
+    depot de gomme: 7
+    fissure rigide: 8
+    fissure rigide reparee: 9
+    depart de materiaux rigide: 10
+    faiencage: 11
+    defaut de joint: 12
+    joint: 13
+    vegetation: 14
+    marquage: 15
+    jonction: 16
+    objet: 17
+    autre: 18
+# define priority: lowest priority first, highest priority last
+priority_list:
+    - marquage
+    - faiencage
+    - remontee de fines
+    - depot de gomme
+    - jonction
+    - ressuage
+    - joint
+    - defaut de joint
+    - desenrobage
+    - fissure souple reparee
+    - fissure rigide reparee
+    - fissure souple
+    - fissure rigide
+    - depart de materiaux rigide
+    - depart de materiaux souple
+    - objet
+    - vegetation
+    - autre
+boundary_settings:
+    default:
+        outside: 2
+        inside: 1
+    fissure souple:
+        outside: 1
+        inside: 2
+# ================================================================================
+## inference
+colors:
+    - [0, 0, 0]
+    - [255, 0, 0]
+    - [0, 255, 0]
+    - [0, 0, 255]
+    - [255, 255, 0]
+    - [255, 0, 255]
+    - [0, 255, 255]
+    - [255, 128, 0]
+    - [255, 0, 128]
+    - [0, 255, 128]
+    - [128, 255, 0]
+    - [128, 0, 255]
+    - [0, 128, 255]
+    - [128, 0, 0]
+    - [0, 128, 0]
+    - [0, 0, 128]
+    - [128, 128, 0]
+    - [128, 0, 128]
+    - [0, 128, 128]

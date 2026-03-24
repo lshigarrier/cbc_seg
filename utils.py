@@ -14,6 +14,9 @@ def get_conf(logger):
     filename = sys.argv[1]
     config_path = Path('.') / Path('config') / f'{filename}.yaml'
     conf = yaml.safe_load(config_path.read_text())
+    class_config_path = Path('.') / Path('config') / f'{conf["class_config"]}.yaml'
+    class_conf = yaml.safe_load(class_config_path.read_text())
+    conf = {**class_conf, **conf}
     conf = SimpleNamespace(**conf)
     logger.info('-' * 70)
     for key, value in vars(conf).items():

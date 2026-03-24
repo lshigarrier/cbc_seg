@@ -38,16 +38,17 @@ def main():
 
     logger = CleanTensorBoardLogger(save_dir=conf.save_dir, name=conf.name)
 
-    checkpoint_callback = ModelCheckpoint(
+    best_checkpoint = ModelCheckpoint(
         monitor="train_loss",
         mode="min",
-        filename="{epoch:03d}",
-        save_last=True
+        filename="{epoch:03d}"
     )
+
+    last_checkpoint = ModelCheckpoint(filename="last")
 
     trainer = pl.Trainer(
         logger=logger,
-        callbacks=[checkpoint_callback, RuntimeTracker()],
+        callbacks=[best_checkpoint, last_checkpoint, RuntimeTracker()],
         max_epochs=conf.max_epochs,
         accelerator="gpu" if conf.use_gpu else "cpu",
         devices=1,
@@ -57,12 +58,16 @@ def main():
         deterministic=conf.deterministic
     )
 
-    trainer.fit(model, datamodule=datamodule)
+    ckpt_path = None
+    if conf.from_ckpt:
+        ckpt_path = Path(conf.save_dir) / conf.name / conf.version / 'checkpoints' / conf.ckpt
+
+    trainer.fit(model, datamodule=datamodule, ckpt_path=ckpt_path)
 
     if conf.save_onnx:
         # Load your trained model
         # model = DeepLabV3Plus.load_from_checkpoint(checkpoint_callback.best_model_path)
-        model = PIDNet.load_from_checkpoint(checkpoint_callback.best_model_path)
+        model = PIDNet.load_from_checkpoint(best_checkpoint.best_model_path)
         model.eval()
 
         dummy_input = torch.randn(1, 3, conf.patch_size, conf.patch_size)
