@@ -8,8 +8,7 @@ import matplotlib.patches as mpatches
 
 from utils import get_conf, logging_conf, pytorch_perf, CustomTimer
 from data.data import ImageDataModule
-# from models.deeplabv3plus import DeepLabV3Plus
-from models.pidnet import PIDNet
+from models.models import get_model
 
 
 def get_colormap(conf_colors):
@@ -59,20 +58,7 @@ def main():
 
     datamodule = ImageDataModule(conf, logger)
 
-    '''model = DeepLabV3Plus.load_from_checkpoint(
-        ckpt_path,
-        num_classes=conf.num_classes,
-        patch_per_img=conf.patch_per_row*conf.patch_per_col,
-        output_dir=output_dir,
-        cmap=cmap
-    )'''
-    model = PIDNet.load_from_checkpoint(
-        ckpt_path,
-        num_classes=conf.num_classes,
-        patch_per_img=conf.patch_per_row*conf.patch_per_col,
-        output_dir=output_dir,
-        cmap=cmap
-    )
+    model = get_model(task='inference', conf=conf, ckpt_path=ckpt_path, output_dir=output_dir, cmap=cmap)
 
     trainer = pl.Trainer(
         logger=False,

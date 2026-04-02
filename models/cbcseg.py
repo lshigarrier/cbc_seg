@@ -2,8 +2,11 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
+import cv2
 import math
-from PIL import Image
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 
 def stitch(patches, boxes, patch_per_img):
@@ -56,6 +59,30 @@ def stitch(patches, boxes, patch_per_img):
     return all_images
 
 
+def process_and_save(image, mask_idx, name, output_dir, cmap, semaphore):
+    """Worker function executed in parallel by the thread pool."""
+    try:
+        # Processing
+        mask_rgba = cmap[mask_idx]
+
+        mask_a = mask_rgba[:, :, 3:].astype(np.float32) / 255.0
+        mask_bgr = mask_rgba[:, :, 2::-1].astype(np.float32)
+
+        image_bgr = image[:, :, ::-1].astype(np.float32)
+        overlay = image_bgr * (1 - mask_a * 0.5) + mask_bgr * (mask_a * 0.5)
+
+        mask_bgr = mask_bgr.astype(np.uint8)
+        overlay = overlay.clip(0, 255).astype(np.uint8)
+
+        # Saving
+        write_params = [cv2.IMWRITE_PNG_COMPRESSION, 1]
+        cv2.imwrite(str(output_dir / f'{name}_mask.png'), mask_bgr, write_params)
+        cv2.imwrite(str(output_dir / f'{name}_over.png'), overlay, write_params)
+    finally:
+        # Always release the semaphore, even if an exception occurs
+        semaphore.release()
+
+
 class CBCSeg(pl.LightningModule):
     def __init__(
             self,
@@ -73,35 +100,45 @@ class CBCSeg(pl.LightningModule):
         self.patch_per_img = patch_per_img
         self.output_dir = output_dir
         self.cmap = cmap
+        self.executor = None
+        self.task_semaphore = None
 
     def forward(self, x):
         return x
 
+    def on_predict_start(self):
+        # Determine the number of workers based on CPU cores, with a sensible max
+        num_workers = min(16, (os.cpu_count() or 4) * 2)
+        # Thread pool to handle concurrent processing and saving
+        self.executor = ThreadPoolExecutor(max_workers=num_workers)
+        # Semaphore limits pending tasks to prevent RAM explosion (Backpressure)
+        self.task_semaphore = threading.Semaphore(256)
+
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         images, names, patches, boxes = batch
 
-        # 1. Forward pass
+        # Forward pass
         outputs = self(patches)
 
-        # 2. Stitching
+        # Stitching
         logits = stitch(outputs, boxes, self.patch_per_img)
 
-        # 3. Processing & Saving
+        # Processing & Saving
         for b in range(len(images)):
             mask_idx = torch.argmax(logits[b], dim=0).cpu().numpy()
-            mask_rgba = self.cmap[mask_idx]
-
-            mask_a = mask_rgba[:, :, 3:].astype(np.float32) / 255.0
-            mask_rgb = mask_rgba[:, :, :3].astype(np.float32)
-
-            image = images[b].astype(np.float32)
-            overlay = image * (1 - mask_a * 0.5) + mask_rgb * (mask_a * 0.5)
-            overlay = overlay.clip(0, 255)
-
-            Image.fromarray(mask_rgb.astype(np.uint8)).save(self.output_dir / f'{names[b]}_mask.png')
-            Image.fromarray(overlay.astype(np.uint8)).save(self.output_dir / f'{names[b]}_over.png')
+            # Acquire semaphore (will block if too many tasks are already pending)
+            self.task_semaphore.acquire()
+            # Submit task to the worker pool
+            self.executor.submit(
+                process_and_save,
+                images[b], mask_idx, names[b], self.output_dir, self.cmap, self.task_semaphore
+            )
 
         return 0
+
+    def on_predict_end(self):
+        # Wait for all remaining background tasks to finish when prediction completes
+        self.executor.shutdown(wait=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(

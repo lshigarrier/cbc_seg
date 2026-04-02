@@ -6,8 +6,7 @@ from pathlib import Path
 
 from utils import get_conf, logging_conf, pytorch_perf, RuntimeTracker, CleanTensorBoardLogger
 from data.data import ImageDataModule
-# from models.deeplabv3plus import DeepLabV3Plus
-from models.pidnet import PIDNet
+from models.models import get_model
 
 
 def main():
@@ -19,22 +18,7 @@ def main():
 
     datamodule = ImageDataModule(conf, main_logger)
 
-    '''model = DeepLabV3Plus(
-        lr=conf.lr,
-        weight_decay=conf.weight_decay,
-        eta_min=conf.eta_min,
-        num_classes=conf.num_classes,
-        tversky_alpha=conf.tversky_alpha,
-        tversky_beta=conf.tversky_beta,
-        ignore_index=conf.ignore_index
-    )'''
-    model = PIDNet(
-        lr=conf.lr,
-        weight_decay=conf.weight_decay,
-        eta_min=conf.eta_min,
-        num_classes=conf.num_classes,
-        ignore_index=conf.ignore_index
-    )
+    model = get_model(task='train', conf=conf)
 
     logger = CleanTensorBoardLogger(save_dir=conf.save_dir, name=conf.name)
 
@@ -66,8 +50,7 @@ def main():
 
     if conf.save_onnx:
         # Load your trained model
-        # model = DeepLabV3Plus.load_from_checkpoint(checkpoint_callback.best_model_path)
-        model = PIDNet.load_from_checkpoint(best_checkpoint.best_model_path)
+        model = get_model(task='load', conf=conf, ckpt_path=best_checkpoint.best_model_path)
         model.eval()
 
         dummy_input = torch.randn(1, 3, conf.patch_size, conf.patch_size)
