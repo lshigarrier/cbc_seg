@@ -54,7 +54,8 @@ def main():
     ckpt_path = Path(conf.save_dir) / conf.name / conf.version / 'checkpoints' / conf.ckpt
 
     cmap = get_colormap(conf.colors)
-    save_legend(conf.class_mapping, cmap, output_dir)
+    if not conf.save_json:
+        save_legend(conf.class_mapping, cmap, output_dir)
 
     datamodule = ImageDataModule(conf, logger)
 

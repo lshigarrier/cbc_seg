@@ -41,16 +41,30 @@ def get_model(task, conf, ckpt_path=None, output_dir=None, cmap=None):
                 ckpt_path,
                 num_classes=conf.num_classes,
                 patch_per_img=conf.patch_per_row*conf.patch_per_col,
+                save_json=conf.save_json,
+                approx_epsilon_factor=conf.approx_epsilon_factor,
+                min_polygon_area=conf.min_polygon_area,
+                edge_margin=conf.edge_margin,
+                inference_workers=conf.inference_workers,
+                semaphore_lim=conf.semaphore_lim,
                 output_dir=output_dir,
-                cmap=cmap
+                cmap=cmap,
+                class_mapping=conf.class_mapping
             )
         elif conf.name == 'pidnet_l':
             model = PIDNet.load_from_checkpoint(
                 ckpt_path,
                 num_classes=conf.num_classes,
                 patch_per_img=conf.patch_per_row*conf.patch_per_col,
+                save_json=conf.save_json,
+                approx_epsilon_factor=conf.approx_epsilon_factor,
+                min_polygon_area=conf.min_polygon_area,
+                edge_margin=conf.edge_margin,
+                inference_workers=conf.inference_workers,
+                semaphore_lim=conf.semaphore_lim,
                 output_dir=output_dir,
-                cmap=cmap
+                cmap=cmap,
+                class_mapping = conf.class_mapping
             )
         else:
             raise NotImplementedError

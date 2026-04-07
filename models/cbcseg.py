@@ -3,8 +3,8 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
 import cv2
+import json
 import math
-import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -83,6 +83,101 @@ def process_and_save(image, mask_idx, name, output_dir, cmap, semaphore):
         semaphore.release()
 
 
+def mask_to_xanylabelling_json(mask, class_mapping, image_name, output_dir, semaphore,
+                               approx_epsilon_factor=0.002, min_polygon_area=250.0, edge_margin=5):
+    """
+    Converts a segmentation mask to an X-AnyLabelling compatible JSON file.
+
+    :param mask: 2D numpy array of shape (H, W) containing class indices.
+    :param class_mapping: Dictionary mapping class names (str) to integers (mask values).
+    :param image_name: Name of the image.
+    :param output_dir: Directory where the output JSON will be saved.
+    :param semaphore:
+    :param approx_epsilon_factor: Factor for contour approximation. Set to 0 to keep all points.
+    :param min_polygon_area: Minimal area per polygon
+    :param edge_margin: Number of pixels from the image boundary to ignore (set to 0)
+    """
+    try:
+        H, W = mask.shape
+
+        # Base structure of the JSON expected by X-AnyLabelling
+        data = {
+            "version": "3.3.10",
+            "flags": {
+                "souple": False,
+                "rigide": False
+            },
+            "shapes": [],
+            "imagePath": f'{image_name}.jpg',
+            "imageData": None,
+            "imageHeight": int(H),
+            "imageWidth": int(W)
+        }
+
+        # Iterate over the specified classes
+        for class_name, class_index in class_mapping.items():
+            # Skip the background class
+            if class_index == 0:
+                continue
+
+            # Create a binary mask for the current class (cv2 requires uint8)
+            binary_mask = np.uint8(mask == class_index)
+
+            if edge_margin > 0 and H > 2 * edge_margin and W > 2 * edge_margin:
+                binary_mask[:edge_margin, :] = 0  # Top edge
+                binary_mask[-edge_margin:, :] = 0  # Bottom edge
+                binary_mask[:, :edge_margin] = 0  # Left edge
+                binary_mask[:, -edge_margin:] = 0  # Right edge
+
+            # Find contours
+            # RETR_EXTERNAL extracts only the outer boundaries. If you have holes in your masks
+            # that need annotating, change to cv2.RETR_TREE or cv2.RETR_CCOMP.
+            # CHAIN_APPROX_SIMPLE compresses horizontal, vertical, and diagonal segments.
+            contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            for contour in contours:
+                # Skip noise (e.g., predicted blobs smaller than 10 pixels in area)
+                if cv2.contourArea(contour) < min_polygon_area:
+                    continue
+
+                # Smooth/approximate the polygon to reduce points.
+                # This makes manual editing in X-AnyLabelling much easier.
+                if approx_epsilon_factor > 0:
+                    epsilon = approx_epsilon_factor * cv2.arcLength(contour, True)
+                    contour = cv2.approxPolyDP(contour, epsilon, True)
+
+                # Reshape contour from (N, 1, 2) to (N, 2) and convert to nested lists
+                # We convert to float to ensure json serialization works correctly
+                points = contour.reshape(-1, 2).astype(float).tolist()
+
+                # A valid polygon needs at least 3 points
+                if len(points) < 3:
+                    continue
+
+                # Construct the shape dictionary
+                shape = {
+                    "label": class_name,
+                    "score": None,
+                    "points": points,
+                    "group_id": None,
+                    "description": "",
+                    "difficult": False,
+                    "shape_type": "polygon",
+                    "flags": {},
+                    "attributes": {},
+                    "kie_linking": []
+                }
+
+                data["shapes"].append(shape)
+
+        # Write the assembled data to the JSON file
+        with open(output_dir / f'{image_name}.json', 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+    finally:
+        # Always release the semaphore, even if an exception occurs
+        semaphore.release()
+
+
 class CBCSeg(pl.LightningModule):
     def __init__(
             self,
@@ -90,16 +185,30 @@ class CBCSeg(pl.LightningModule):
             weight_decay=1e-4,
             eta_min=1e-6,
             patch_per_img=21,
+            save_json=False,
+            approx_epsilon_factor=0.002,
+            min_polygon_area=250.0,
+            edge_margin=5,
+            inference_workers=32,
+            semaphore_lim=256,
             output_dir=None,
-            cmap=None
+            cmap=None,
+            class_mapping=None
     ):
         super().__init__()
         self.lr = lr
         self.weight_decay = weight_decay
         self.eta_min = eta_min
         self.patch_per_img = patch_per_img
+        self.save_json = save_json
+        self.approx_epsilon_factor = approx_epsilon_factor
+        self.min_polygon_area = min_polygon_area
+        self.edge_margin = edge_margin
+        self.inference_workers = inference_workers
+        self.semaphore_lim = semaphore_lim
         self.output_dir = output_dir
         self.cmap = cmap
+        self.class_mapping = class_mapping
         self.executor = None
         self.task_semaphore = None
 
@@ -107,12 +216,10 @@ class CBCSeg(pl.LightningModule):
         return x
 
     def on_predict_start(self):
-        # Determine the number of workers based on CPU cores, with a sensible max
-        num_workers = min(16, (os.cpu_count() or 4) * 2)
         # Thread pool to handle concurrent processing and saving
-        self.executor = ThreadPoolExecutor(max_workers=num_workers)
+        self.executor = ThreadPoolExecutor(max_workers=self.inference_workers)
         # Semaphore limits pending tasks to prevent RAM explosion (Backpressure)
-        self.task_semaphore = threading.Semaphore(256)
+        self.task_semaphore = threading.Semaphore(self.semaphore_lim)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         images, names, patches, boxes = batch
@@ -129,10 +236,17 @@ class CBCSeg(pl.LightningModule):
             # Acquire semaphore (will block if too many tasks are already pending)
             self.task_semaphore.acquire()
             # Submit task to the worker pool
-            self.executor.submit(
-                process_and_save,
-                images[b], mask_idx, names[b], self.output_dir, self.cmap, self.task_semaphore
-            )
+            if self.save_json:
+                self.executor.submit(
+                    mask_to_xanylabelling_json,
+                    mask_idx, self.class_mapping, names[b], self.output_dir, self.task_semaphore,
+                    self.approx_epsilon_factor, self.min_polygon_area, self.edge_margin
+                )
+            else:
+                self.executor.submit(
+                    process_and_save,
+                    images[b], mask_idx, names[b], self.output_dir, self.cmap, self.task_semaphore
+                )
 
         return 0
 
