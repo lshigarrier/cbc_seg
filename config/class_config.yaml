@@ -69,3 +69,12 @@ colors:
     - [128, 128, 0]
     - [128, 0, 128]
     - [0, 128, 128]
+# ================================================================================
+## mosaic
+input_dir: C:/Users/Admin/Data/test_mosaic/raw_images
+output_dir: C:/Users/Admin/Data/test_mosaic/compressed_images
+epsg: 3944
+# ================================================================================
+## compress images
+scale_factor: 0.5
+jpeg_quality: 95

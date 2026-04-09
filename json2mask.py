@@ -2,6 +2,7 @@ import logging
 import json
 import numpy as np
 import cv2
+import concurrent.futures
 from pathlib import Path
 
 from utils import get_conf, logging_conf
@@ -20,7 +21,7 @@ def process_json_to_mask(conf, json_path, logger):
     img_width = data.get('imageWidth')
 
     if not img_height or not img_width:
-        logger.info(f"Skipping {json_path}: Missing imageHeight/Width")
+        logger.warning(f"Skipping {json_path}: Missing imageHeight/Width")
         return
 
     # Initialize a blank mask (Background = 0)
@@ -79,10 +80,17 @@ def main():
     # Find all JSON files recursively
     json_files = list(Path(conf.data_dir).rglob("*.json"))
 
-    logger.info(f"Found {len(json_files)} JSON files.")
+    logger.info(f"Found {len(json_files)} JSON files. Starting conversion...")
 
-    for json_path in json_files:
-        process_json_to_mask(conf, json_path, logger)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=conf.thread_workers) as executor:
+        futures = [executor.submit(process_json_to_mask, conf, json_path, logger) for json_path in json_files]
+
+        # Wait for tasks to complete and catch any potential errors
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                logger.error(f"An error occurred during processing: {e}")
 
     logger.info("Done converting annotations to masks!")
 
