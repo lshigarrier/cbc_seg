@@ -72,9 +72,19 @@ colors:
 # ================================================================================
 ## mosaic
 input_dir: C:/Users/Admin/Data/test_mosaic/raw_images
-output_dir: C:/Users/Admin/Data/test_mosaic/compressed_images
+output_dir: C:/Users/Admin/Data/test_mosaic/processed_images
 epsg: 3944
+overlap_height_pixels: 1500
+angle_min: -5.
+angle_max: 5.
+angle_step: 1.
+response_thr: 0.01
+span_width: 3.
+vehicle_step: 1.3
+weight_gps: 1.
+weight_vision: 10.
+weight_kinematic: 2.
 # ================================================================================
 ## compress images
-scale_factor: 0.5
+scale_factor: 0.05
 jpeg_quality: 95
