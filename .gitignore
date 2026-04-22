@@ -12,3 +12,6 @@ __pycache__/
 # Outputs
 output/
 lightning_logs/
+
+# Archives
+archives/
