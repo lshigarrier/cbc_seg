@@ -19,7 +19,24 @@ class ImageDataset(Dataset):
             patch_overlap: float = 0.5
     ) -> None:
         super().__init__()
-        self.paths = sorted(Path(folder).rglob('*.jpg'))
+
+        folder_path = Path(folder)
+        paths_file = folder_path / "paths.txt"
+
+        if paths_file.is_file():
+            self.split_name = True
+            all_paths = []
+            with paths_file.open('r', encoding='utf-8') as f:
+                for line in f:
+                    cleaned_path = line.strip().strip('"').strip("'")
+                    if cleaned_path:
+                        target_dir = Path(cleaned_path)
+                        all_paths.extend(target_dir.rglob('*.jpg'))
+            self.paths = sorted(all_paths)
+        else:
+            self.split_name = False
+            self.paths = sorted(folder_path.rglob('*.jpg'))
+
         self.patch_per_row = patch_per_row
         self.patch_per_col = patch_per_col
         self.patch_per_img = patch_per_row * patch_per_col
@@ -38,7 +55,10 @@ class ImageDataset(Dataset):
         img = cv2.imread(str(path), cv2.IMREAD_COLOR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        name = path.stem
+        if self.split_name:
+            name = f"{path.parent.name}_{path.stem}"
+        else:
+            name = path.stem
 
         H, W, _ = img.shape
         Pw = W / (1 + (self.patch_per_row - 1) * (1 - self.patch_overlap)) if self.patch_per_row > 1 else W

@@ -7,6 +7,7 @@ import pyproj
 import rasterio
 from pathlib import Path
 from rasterio.transform import Affine
+from rasterio.warp import reproject, Resampling
 
 from utils import logging_conf, get_conf
 
@@ -116,12 +117,20 @@ def compute_relative_transform(conf, kp_curr, des_curr, theta_curr, kp_prev, des
     h_scene[0:2, :] = matrix
 
     # Invert the matrix to compute the actual camera motion
-    h_cam = np.linalg.inv(h_scene)
+    try:
+        h_cam = np.linalg.inv(h_scene)
+    except np.linalg.LinAlgError:
+        return None, None
 
     # Extract rigid camera translation (pixels) and rotation (radians)
     dx = h_cam[0, 2]
     dy = h_cam[1, 2]
     dtheta = math.atan2(h_cam[1, 0], h_cam[0, 0])
+
+    # Validation against shadows / static vehicle parts
+    step_norm = math.hypot(dx, dy)
+    if step_norm < conf.min_step:
+        return None, None
 
     # Validation against GPS prior
     expected_dtheta = theta_curr - theta_prev
@@ -182,7 +191,7 @@ def process_passage(conf, passage_dir, logger):
             theta_curr = row['Theta_raw']
             pixel_to_meter = conf.span_width / img_stitch.shape[1]
         else:
-            logger.info(f"Processing image {row['Image']}")
+            # logger.info(f"Processing image {row['Image']}")
 
             trans, dtheta = compute_relative_transform(conf, kp_curr, des_curr, theta_curr, kp_prev, des_prev, theta_prev)
 
@@ -194,7 +203,7 @@ def process_passage(conf, passage_dir, logger):
                 y_curr = y_prev + forward_step * math.sin(theta_prev) + lateral_step * math.cos(theta_prev)
                 theta_curr = theta_prev + dtheta
             else:
-                logger.info(f"Stitching failed for {row['Image']}, using fallback")
+                # logger.info(f"Stitching failed for {row['Image']}, using fallback")
                 x_kin = x_prev + math.cos(theta_prev) * conf.vehicle_step
                 y_kin = y_prev + math.sin(theta_prev) * conf.vehicle_step
                 x_curr = conf.weight_gps_v_kin * row['X_raw'] + (1 - conf.weight_gps_v_kin) * x_kin
@@ -284,7 +293,7 @@ def create_oriented_mosaic(conf, df_coords, low_res_images, out_tif_path, logger
 
     # 3. Paste images into the local bounding box
     for (img_low, idx), x_prime, y_prime in zip(low_res_images, x_prime_list, y_prime_list):
-        theta_global = df_coords.iloc[idx]['Theta_corr']
+        theta_global = df_coords.loc[idx]['Theta_corr']
         theta_local = theta_global - alpha - np.pi/2
 
         cx_px = (x_prime - min_x_prime) / pixel_to_meter
@@ -332,58 +341,90 @@ def create_oriented_mosaic(conf, df_coords, low_res_images, out_tif_path, logger
     logger.info(f"Mosaic created at {out_tif_path}")
 
 
-def merge_all_passages(conf, tif_paths, out_path, logger):
+def merge_all_passages(tif_paths, out_path, logger):
     """
-    Merges multiple passage GeoTIFFs into a single global GeoTIFF.
+    Merges multiple oriented passage GeoTIFFs into a single tightly-fit oriented global GeoTIFF.
     Overlapping regions are averaged.
     """
-    # 1. Compute global bounds and extract base resolution
-    min_x, min_y, max_x, max_y = float('inf'), float('inf'), float('-inf'), float('-inf')
-    pixel_to_meter = None
+    if not tif_paths:
+        logger.warning("No TIFF files provided for merging.")
+        return
 
+    all_corners_x = []
+    all_corners_y = []
+
+    # 1. Extract base resolution, CRS, and orientation from the first passage
+    with rasterio.open(tif_paths[0]) as src0:
+        # For a transform T = Translation * Rotation(alpha) * Scale(res, -res)
+        # T.a = res * cos(alpha), T.b = res * sin(alpha)
+        res = math.sqrt(src0.transform.a ** 2 + src0.transform.b ** 2)
+        alpha = math.atan2(src0.transform.b, src0.transform.a)
+        crs = src0.crs
+
+    # 2. Compute the exact geographic coordinates of the 4 corners of every TIFF
     for path in tif_paths:
         with rasterio.open(path) as src:
-            bounds = src.bounds
-            min_x = min(min_x, bounds.left)
-            min_y = min(min_y, bounds.bottom)
-            max_x = max(max_x, bounds.right)
-            max_y = max(max_y, bounds.top)
+            w, h = src.width, src.height
+            T = src.transform
+            corners_px = [(0, 0), (w, 0), (w, h), (0, h)]
+            for col, row in corners_px:
+                x, y = T * (col, row)
+                all_corners_x.append(x)
+                all_corners_y.append(y)
 
-            if pixel_to_meter is None:
-                pixel_to_meter = src.transform.a
+    all_corners_x = np.array(all_corners_x)
+    all_corners_y = np.array(all_corners_y)
 
-    # 2. Compute global dimensions
-    width_px = int(np.ceil((max_x - min_x) / pixel_to_meter))
-    height_px = int(np.ceil((max_y - min_y) / pixel_to_meter))
+    # 3. Rotate all geographic corners by -alpha to align with the X/Y axes
+    cos_m = math.cos(-alpha)
+    sin_m = math.sin(-alpha)
 
-    global_transform = Affine.translation(min_x, max_y) * Affine.scale(pixel_to_meter, -pixel_to_meter)
+    x_prime = all_corners_x * cos_m - all_corners_y * sin_m
+    y_prime = all_corners_x * sin_m + all_corners_y * cos_m
 
-    # Use float32 for accumulation to prevent overflow
+    # 4. Find the tightly fitting bounds in the rotated space
+    min_x_prime, max_x_prime = x_prime.min(), x_prime.max()
+    min_y_prime, max_y_prime = y_prime.min(), y_prime.max()
+
+    width_px = int(math.ceil((max_x_prime - min_x_prime) / res))
+    height_px = int(math.ceil((max_y_prime - min_y_prime) / res))
+
+    # 5. Construct the global oriented Affine transform
+    global_transform = (
+            Affine.rotation(math.degrees(alpha)) *
+            Affine.translation(min_x_prime, max_y_prime) *
+            Affine.scale(res, -res)
+    )
+
+    # 6. Allocate accumulator arrays
     global_canvas = np.zeros((3, height_px, width_px), dtype=np.float32)
     global_weight = np.zeros((1, height_px, width_px), dtype=np.float32)
 
-    # 3. Accumulate data
+    # 7. Warp each oriented passage into the global oriented grid and accumulate
     for path in tif_paths:
         with rasterio.open(path) as src:
-            data = src.read()  # Shape: (3, H, W)
+            temp_arr = np.zeros((3, height_px, width_px), dtype=np.float32)
 
-            # Compute offsets in the global canvas
-            col_offset = int(round((src.bounds.left - min_x) / pixel_to_meter))
-            row_offset = int(round((max_y - src.bounds.top) / pixel_to_meter))
+            reproject(
+                source=rasterio.band(src, [1, 2, 3]),
+                destination=temp_arr,
+                src_transform=src.transform,
+                src_crs=src.crs,
+                dst_transform=global_transform,
+                dst_crs=crs,
+                resampling=Resampling.nearest
+            )
 
-            h, w = data.shape[1], data.shape[2]
+            # Valid mask assumes 0 is NoData background
+            valid_mask = np.any(temp_arr > 0, axis=0)[np.newaxis, ...]
+            global_canvas += temp_arr * valid_mask
+            global_weight += valid_mask
 
-            # Valid pixels mask (assuming black/0 is nodata)
-            valid_mask = np.any(data > 0, axis=0)[np.newaxis, ...]
-
-            global_canvas[:, row_offset:row_offset + h, col_offset:col_offset + w] += (data * valid_mask)
-            global_weight[:, row_offset:row_offset + h, col_offset:col_offset + w] += valid_mask
-
-    # 4. Average and cast back to uint8
+    # 8. Average overlapping regions and cast to uint8
     np.divide(global_canvas, global_weight, out=global_canvas, where=global_weight > 0)
     global_canvas = global_canvas.astype(np.uint8)
 
-    # 5. Write out the final merged raster
+    # 9. Write out the tightly fit global mosaic
     with rasterio.open(
             out_path,
             'w',
@@ -392,7 +433,7 @@ def merge_all_passages(conf, tif_paths, out_path, logger):
             width=width_px,
             count=3,
             dtype=global_canvas.dtype,
-            crs=conf.crs_projected,
+            crs=crs,
             transform=global_transform,
             compress='lzw'
     ) as dest:
@@ -412,36 +453,60 @@ def main():
 
     generated_tifs = []
 
-    for passage_dir in input_dir.iterdir():
+    paths_file = input_dir / "paths.txt"
+    if paths_file.is_file():
+        logger.info(f"Found {paths_file.name}, reading passage directories from file.")
+        with paths_file.open('r', encoding='utf-8') as f:
+            # Strip whitespace, then strip both double and single quotes just in case
+            passage_dirs = [Path(line.strip().strip('\'"')) for line in f if line.strip()]
+    else:
+        logger.info(f"No paths.txt found in {input_dir}, iterating over subdirectories.")
+        passage_dirs = list(input_dir.iterdir())
+
+    for passage_dir in passage_dirs:
         if not passage_dir.is_dir():
             continue
 
         passage_name = passage_dir.name
         out_csv = out_dir / f"{passage_name}.csv"
-        out_tif = out_dir / f"{passage_name}.tif"
 
-        '''
         if out_csv.exists():
             logger.info(f"CSV found for {passage_name}")
             df_coords = pd.read_csv(out_csv)
             low_res_images = load_low_res_images(conf, df_coords, passage_dir, logger)
         else:
-        '''
-        logger.info(f'Processing passage {passage_name}')
-        df_coords, low_res_images = process_passage(conf, passage_dir, logger)
-        if df_coords is None or df_coords.empty or not low_res_images:
-            logger.error(f"Failed to process passage {passage_name}")
-            continue
-        df_coords.to_csv(out_csv, index=False)
+            logger.info(f'Processing passage {passage_name}')
+            df_coords, low_res_images = process_passage(conf, passage_dir, logger)
+            if df_coords is None or df_coords.empty or not low_res_images:
+                logger.error(f"Failed to process passage {passage_name}")
+                continue
+            df_coords.to_csv(out_csv, index=False)
 
-        logger.info(f"Creating mosaic for {passage_name}")
-        create_oriented_mosaic(conf, df_coords, low_res_images, out_tif, logger)
-        generated_tifs.append(out_tif)
+        total_images = len(low_res_images)
+        chunk_size = conf.chunk_size
+
+        if total_images <= chunk_size:
+            out_tif = out_dir / f"{passage_name}.tif"
+            logger.info(f"Creating mosaic for {passage_name} ({total_images} images)")
+            create_oriented_mosaic(conf, df_coords, low_res_images, out_tif, logger)
+            generated_tifs.append(out_tif)
+        else:
+            logger.info(f"Passage {passage_name} has {total_images} images. Splitting into chunks of {chunk_size}.")
+            for i in range(0, total_images, chunk_size):
+                chunk_index = i // chunk_size
+                out_tif = out_dir / f"{passage_name}_{chunk_index:02d}.tif"
+
+                df_chunk = df_coords.iloc[i:i + chunk_size].copy()
+                images_chunk = low_res_images[i:i + chunk_size]
+
+                logger.info(f"Creating mosaic chunk {chunk_index} for {passage_name}")
+                create_oriented_mosaic(conf, df_chunk, images_chunk, out_tif, logger)
+                generated_tifs.append(out_tif)
 
     if generated_tifs:
         logger.info("Merging all passages into a single global mosaic...")
         merged_out_path = out_dir / "mosaic.tif"
-        merge_all_passages(conf, generated_tifs, merged_out_path, logger)
+        merge_all_passages(generated_tifs, merged_out_path, logger)
 
 if __name__ == '__main__':
     main()
