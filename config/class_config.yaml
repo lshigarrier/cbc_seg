@@ -71,26 +71,31 @@ colors:
     - [0, 128, 128]
 # ================================================================================
 ## mosaic
-input_dir: C:/Users/Admin/Data/mdm_p1
-output_dir: C:/Users/Admin/Data/mdm_p1
+input_dir: C:/Users/Admin/Data/mdm_p1 # C:/Users/Admin/Data/test_mosaic/raw_images # C:/Users/Admin/Data/mdm_p1
+output_dir: C:/Users/Admin/Data/mdm_p1/mosaic # C:/Users/Admin/Data/test_mosaic/processed_images # C:/Users/Admin/Data/mdm_p1/mosaic
+read_csv: false
 # projection
 crs_gps: EPSG:4326
 crs_projected: EPSG:3944
 heading_smoothing_window: 5
 cam_offset_x: 0.0
-cam_offset_y: 2.0
+cam_offset_y: 2.5
 # image dimension
 downscale_factor: 0.05
 span_width: 3.0
-# stitching
+# stitching main method
 stitch_downscale_factor: 0.25
 orb_nfeatures: 3000
-orb_ratio_threshold: 0.75
+orb_ratio_threshold: 0.5
 min_match_count: 20
 ransac_threshold: 3.0
-min_step: 0.2
-max_angle_deviation_rad: 0.2
+min_inlier_ratio: 0.6
+# stitching additional methods
+max_scale_deviation: 0.05
+max_lateral_drift: 3.0
+max_angle_deviation_rad: 0.6
 vehicle_step: 1.5
+max_gps_kin_dist: 3.0
 weight_gps_v_kin: 1.0
-# create GeoTIFF
-chunk_size: 100
+# COG
+merge_window_size: 2048

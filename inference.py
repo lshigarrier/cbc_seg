@@ -73,7 +73,7 @@ def main():
     timer.start()
     trainer.predict(model, datamodule=datamodule)
     logger.info(f'Predictions saved in {output_dir}')
-    timer.stop(logger, len(datamodule.predict_dataset))
+    timer.stop(logger, len_dataset=len(datamodule.predict_dataset))
 
     peak_memory_gb = torch.cuda.max_memory_allocated() / 1024 ** 3
     logger.info(f'Peak GPU memory allocated: {peak_memory_gb:.2f} GB')

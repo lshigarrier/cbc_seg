@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from pathlib import Path
 
 
-def get_conf(logger):
+def get_conf(logger, verbose=True):
     filename = sys.argv[1]
     config_path = Path('.') / Path('config') / f'{filename}.yaml'
     conf = yaml.safe_load(config_path.read_text())
@@ -18,10 +18,11 @@ def get_conf(logger):
     class_conf = yaml.safe_load(class_config_path.read_text())
     conf = {**class_conf, **conf}
     conf = SimpleNamespace(**conf)
-    logger.info('-' * 70)
-    for key, value in vars(conf).items():
-        logger.info(f'{key} : {value}')
-    logger.info('-' * 70)
+    if verbose:
+        logger.info('-' * 70)
+        for key, value in vars(conf).items():
+            logger.info(f'{key} : {value}')
+        logger.info('-' * 70)
     return conf
 
 
@@ -77,13 +78,15 @@ class CustomTimer:
         self.start_perf_count = time.perf_counter()
         self.start_process_time = time.process_time()
 
-    def stop(self, logger, len_dataset):
+    def stop(self, logger, len_dataset=None, show_time_per_image=True):
         elapsed_perf_count = time.perf_counter() - self.start_perf_count
         elapsed_process_time = time.process_time() - self.start_process_time
         logger.info(f"Perf counter: {elapsed_perf_count:.2f} s")
-        logger.info(f"  Time per image: {elapsed_perf_count / len_dataset * 1000:.2f} ms")
+        if show_time_per_image:
+            logger.info(f"  Time per image: {elapsed_perf_count / len_dataset * 1000:.2f} ms")
         logger.info(f"Process time: {elapsed_process_time:.2f} s")
-        logger.info(f"  Time per image: {elapsed_process_time / len_dataset * 1000:.2f} ms")
+        if show_time_per_image:
+            logger.info(f"  Time per image: {elapsed_process_time / len_dataset * 1000:.2f} ms")
 
 
 class RuntimeTracker(Callback):
