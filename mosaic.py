@@ -5,9 +5,13 @@ import numpy as np
 import pandas as pd
 import pyproj
 import rasterio
+import json
 from pathlib import Path
 from rasterio.transform import Affine
 from rasterio.windows import Window
+from shapely.geometry import Polygon, mapping
+from shapely.ops import unary_union
+from shapely.ops import transform as shapely_transform
 
 from utils import logging_conf, get_conf, CustomTimer
 
@@ -278,8 +282,8 @@ def process_passage(conf, passage_dir, logger):
                 y_curr = y_prev + forward_step * math.sin(theta_prev) + lateral_step * math.cos(theta_prev)
                 theta_curr = theta_prev + dtheta
             else:
-                x_curr = conf.weight_gps_v_kin * row['X_raw'] + (1 - conf.weight_gps_v_kin) * x_kin
-                y_curr = conf.weight_gps_v_kin * row['Y_raw'] + (1 - conf.weight_gps_v_kin) * y_kin
+                x_curr = row['X_raw']
+                y_curr = row['Y_raw']
                 theta_curr = row['Theta_raw']
                 # End of rigid group. Correct the previous block and start a new one.
                 correct_rigid_group(group_start_idx, len(corrected_data))
@@ -304,7 +308,172 @@ def process_passage(conf, passage_dir, logger):
     return df_out
 
 
-def generate_global_cog(conf, all_passage_data, out_cog_path, logger):
+def export_qgis_style(conf, qml_path, logger):
+    categories_xml = []
+    symbols_xml = []
+
+    for idx, (cls_name, color) in enumerate(conf.class2show.items()):
+        color_str = f"{color[0]},{color[1]},{color[2]},255"
+
+        categories_xml.append(
+            f'<category symbol="{idx}" value="{cls_name}" label="{cls_name}"/>'
+        )
+        symbols_xml.append(f"""
+        <symbol name="{idx}" type="fill" force_rhr="0" alpha="1" clip_to_extent="1">
+          <layer pass="0" class="SimpleFill" locked="0">
+            <prop k="color" v="{color_str}"/>
+            <prop k="style" v="solid"/>
+            <prop k="outline_color" v="0,0,0,255"/>
+            <prop k="outline_style" v="no"/>
+            <prop k="outline_width" v="0.26"/>
+          </layer>
+        </symbol>""")
+
+    qml_content = f"""<!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>
+<qgis version="3.0.0">
+  <renderer-v2 type="categorizedSymbol" attr="class" enableorderby="1">
+    <categories>
+      {"".join(categories_xml)}
+    </categories>
+    <symbols>
+      {"".join(symbols_xml)}
+    </symbols>
+    <orderby>
+      <orderByClause asc="1" nullsFirst="0">"priority"</orderByClause>
+    </orderby>
+  </renderer-v2>
+</qgis>"""
+
+    qml_path.write_text(qml_content, encoding='utf-8')
+    logger.info(f"Generated QGIS style file with priority ordering at {qml_path}")
+
+
+def process_detections(conf, all_passage_data, out_dir, logger):
+    logger.info("Starting detection processing, projection, and export")
+
+    detection_dir = Path(conf.detection_dir)
+
+    geojson_path = out_dir / "merged_detections.geojson"
+    qml_path = out_dir / "merged_detections.qml"
+
+    image_lookup = {}
+    for df_coords, passage_dir in all_passage_data:
+        folder_name = passage_dir.name
+        for _, row in df_coords.iterrows():
+            image_name = Path(row['Image']).stem
+            image_lookup[(folder_name, image_name)] = {
+                'X_corr': row['X_corr'],
+                'Y_corr': row['Y_corr'],
+                'Theta_corr': row['Theta_corr']
+            }
+
+    class_polygons = {cls: [] for cls in conf.class2show.keys()}
+
+    for json_path in detection_dir.glob("*.json"):
+        with json_path.open('r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        image_path_str = data.get("imagePath", json_path.stem)
+        parts = image_path_str.split('_')
+        if len(parts) < 2:
+            continue
+
+        folder_name = "_".join(parts[:-1])
+        image_name = parts[-1].split('.')[0]
+
+        lookup_data = image_lookup.get((folder_name, image_name))
+        if lookup_data is None:
+            logger.warning(f"Cannot find image ({folder_name}, {image_name})")
+            continue
+
+        x_corr = lookup_data['X_corr']
+        y_corr = lookup_data['Y_corr']
+        theta_corr = lookup_data['Theta_corr']
+
+        h = data["imageHeight"]
+        w = data["imageWidth"]
+        pixel_to_meter = conf.span_width / w
+
+        # Apply the -pi/2 display rotation
+        effective_theta = theta_corr - (np.pi / 2.0)
+        cos_theta = np.cos(effective_theta)
+        sin_theta = np.sin(effective_theta)
+
+        for shape_dict in data.get("shapes", []):
+            label = shape_dict.get("label")
+            if label not in conf.class2show:
+                continue
+
+            pts = np.array(shape_dict["points"], dtype=np.float64)
+            if len(pts) < 3:
+                continue
+
+            # Origin is top-left, rotation is applied at the center.
+            # Y is inverted to match the mosaic's upward-pointing local Y axis.
+            dx_pix = pts[:, 0] - w / 2.0
+            dy_pix = h / 2.0 - pts[:, 1]
+
+            dx_m = dx_pix * pixel_to_meter
+            dy_m = dy_pix * pixel_to_meter
+
+            # Rotate by effective vehicle heading and translate to global position
+            x_global = x_corr + (dx_m * cos_theta - dy_m * sin_theta)
+            y_global = y_corr + (dx_m * sin_theta + dy_m * cos_theta)
+
+            # Store the polygon in the projected CRS (meters)
+            proj_pts = np.column_stack((x_global, y_global))
+            class_polygons[label].append(Polygon(proj_pts))
+
+    logger.info("Merging overlapping polygons by class and projecting to WGS84")
+
+    # Initialize the transformer and the shapely transform wrapper
+    transformer = pyproj.Transformer.from_crs(conf.crs_projected, "EPSG:4326", always_xy=True)
+
+    features = []
+    for cls_name, polys in class_polygons.items():
+        if not polys:
+            continue
+
+        # Apply buffer(0) to fix microscopic self-intersections before merging
+        valid_polys = [p.buffer(0) for p in polys]
+
+        # Merge in the projected CRS
+        merged_poly = unary_union(valid_polys)
+
+        # Transform the merged geometry to WGS84
+        merged_poly_wgs84 = shapely_transform(transformer.transform, merged_poly)
+
+        geometries = [merged_poly_wgs84] if merged_poly_wgs84.geom_type == 'Polygon' else merged_poly_wgs84.geoms
+
+        # Determine the priority integer based on the config list.
+        try:
+            priority_val = conf.priority_list.index(cls_name)
+        except ValueError:
+            priority_val = -1
+
+        for geom in geometries:
+            features.append({
+                "type": "Feature",
+                "properties": {
+                    "class": cls_name,
+                    "priority": priority_val
+                },
+                "geometry": mapping(geom)
+            })
+
+    geojson_dict = {
+        "type": "FeatureCollection",
+        "features": features
+    }
+
+    with geojson_path.open('w', encoding='utf-8') as f:
+        json.dump(geojson_dict, f)
+
+    export_qgis_style(conf, qml_path, logger)
+    logger.info(f"Saved GeoJSON to {geojson_path} and corresponding QML styling.")
+
+
+def generate_global_cog(conf, all_passage_data, out_dir, logger):
     """
     Creates a single global mosaic directly on disk by iterating over spatial windows,
     blending overlapping images, and computing global statistics to avoid aux.xml generation.
@@ -386,17 +555,13 @@ def generate_global_cog(conf, all_passage_data, out_cog_path, logger):
     }
 
     logger.info(f"Allocating global GeoTIFF ({width_px}x{height_px} pixels)")
+    out_cog_path = out_dir / "mosaic.tif"
     with rasterio.open(out_cog_path, 'w', **profile) as _:
         pass  # Create empty structure
 
     # Mask template shrunk by 1 pixel to prevent interpolation edge artifacts
     mask_low = np.zeros((h_low, w_low), dtype=np.uint8)
     mask_low[1:-1, 1:-1] = 255
-
-    # Accumulators for global statistics
-    global_sum = np.zeros(3, dtype=np.float64)
-    global_sq_sum = np.zeros(3, dtype=np.float64)
-    global_valid_pixels = 0
 
     # 2. Iterate over spatial windows
     window_size = conf.merge_window_size
@@ -477,27 +642,7 @@ def generate_global_cog(conf, all_passage_data, out_cog_path, logger):
                     avg_arr[b, valid_pixels] = np.clip(sum_arr[b, valid_pixels] / count_arr[valid_pixels], 0,
                                                        255).astype(np.uint8)
 
-                    # Accumulate global statistics
-                    band_vals = avg_arr[b, valid_pixels].astype(np.float64)
-                    global_sum[b] += np.sum(band_vals)
-                    global_sq_sum[b] += np.sum(band_vals ** 2)
-
-                global_valid_pixels += np.count_nonzero(valid_pixels)
-
                 dst.write(avg_arr, window=Window(col_off, row_off, win_w, win_h))
-
-        # 3. Write statistics to tags to prevent .aux.xml generation
-        if global_valid_pixels > 0:
-            mean = global_sum / global_valid_pixels
-            std = np.sqrt((global_sq_sum / global_valid_pixels) - mean ** 2)
-
-            for b in range(3):
-                # Rasterio uses 1-based indexing for bands
-                dst.update_tags(b + 1,
-                                STATISTICS_MIN=0,
-                                STATISTICS_MAX=255,
-                                STATISTICS_MEAN=mean[b],
-                                STATISTICS_STDDEV=std[b])
 
     logger.info(f"Global mosaic generation complete: {out_cog_path}")
 
@@ -545,8 +690,11 @@ def main():
 
         all_passage_data.append((df_coords, passage_dir))
 
-    merged_out_path = out_dir / "mosaic.tif"
-    generate_global_cog(conf, all_passage_data, merged_out_path, logger)
+    if conf.generate_detections:
+        process_detections(conf, all_passage_data, out_dir, logger)
+
+    if conf.generate_mosaic:
+        generate_global_cog(conf, all_passage_data, out_dir, logger)
 
     timer.stop(logger, show_time_per_image=False)
 
