@@ -79,11 +79,11 @@ read_csv: true
 crs_gps: EPSG:4326
 crs_projected: EPSG:3944
 heading_smoothing_window: 5
-cam_offset_x: 0.0
-cam_offset_y: 2.5 # 3.7
+cam_offset_x: 0.0  # in meters
+cam_offset_y: 2.5 # 3.7  # in meters
 # image dimension
 downscale_factor: 0.05
-span_width: 3.0
+span_width: 3.0  # in meters
 # stitching main method
 stitch_downscale_factor: 0.25
 orb_nfeatures: 3000
@@ -93,10 +93,10 @@ ransac_threshold: 3.0
 min_inlier_ratio: 0.6
 # stitching additional methods
 max_scale_deviation: 0.05
-max_lateral_drift: 3.0
-max_angle_deviation_rad: 0.6
-vehicle_step: 1.5
-max_gps_kin_dist: 3.0
+max_lateral_drift: 3.0  # in meters
+max_angle_deviation_rad: 0.6  # in radians
+vehicle_step: 1.5  # in meters
+max_gps_kin_dist: 3.0  # in meters
 # COG
 merge_window_size: 2048
 # display detections
@@ -107,3 +107,23 @@ class2show:
     vegetation: [255, 0, 0]
     fissure souple reparee: [0, 0, 255]
     depart de materiaux souple: [0, 255, 0]
+# ================================================================================
+## postprocessing
+# true for linear defects, false for surface defects
+class_type:
+    fissure souple: true
+    fissure souple reparee: true
+    depart de materiaux souple: false
+    desenrobage: false
+    remontee de fines: false
+    ressuage: false
+    depot de gomme: false
+    fissure rigide: true
+    fissure rigide reparee: true
+    depart de materiaux rigide: false
+    faiencage: false
+    defaut de joint: true
+    vegetation: true
+raster_res: 0.75  # in mm
+bin_width: 2.5  # in mm
+num_bins: 11

@@ -7,6 +7,7 @@ import pyproj
 import rasterio
 import json
 from pathlib import Path
+from collections import defaultdict
 from rasterio.transform import Affine
 from rasterio.windows import Window
 from shapely.geometry import Polygon, mapping
@@ -353,8 +354,9 @@ def process_detections(conf, all_passage_data, out_dir, logger):
 
     detection_dir = Path(conf.detection_dir)
 
-    geojson_path = out_dir / "merged_detections.geojson"
-    qml_path = out_dir / "merged_detections.qml"
+    geojson_path_all = out_dir / "detections.geojson"
+    geojson_path_vis = out_dir / "visible_detections.geojson"
+    qml_path = out_dir / "visible_detections.qml"
 
     image_lookup = {}
     for df_coords, passage_dir in all_passage_data:
@@ -367,7 +369,7 @@ def process_detections(conf, all_passage_data, out_dir, logger):
                 'Theta_corr': row['Theta_corr']
             }
 
-    class_polygons = {cls: [] for cls in conf.class2show.keys()}
+    class_polygons = defaultdict(list)
 
     for json_path in detection_dir.glob("*.json"):
         with json_path.open('r', encoding='utf-8') as f:
@@ -401,7 +403,7 @@ def process_detections(conf, all_passage_data, out_dir, logger):
 
         for shape_dict in data.get("shapes", []):
             label = shape_dict.get("label")
-            if label not in conf.class2show:
+            if not label:
                 continue
 
             pts = np.array(shape_dict["points"], dtype=np.float64)
@@ -429,7 +431,8 @@ def process_detections(conf, all_passage_data, out_dir, logger):
     # Initialize the transformer and the shapely transform wrapper
     transformer = pyproj.Transformer.from_crs(conf.crs_projected, "EPSG:4326", always_xy=True)
 
-    features = []
+    features_all = []
+    features_vis = []
     for cls_name, polys in class_polygons.items():
         if not polys:
             continue
@@ -452,25 +455,32 @@ def process_detections(conf, all_passage_data, out_dir, logger):
             priority_val = -1
 
         for geom in geometries:
-            features.append({
+            feat = {
                 "type": "Feature",
                 "properties": {
                     "class": cls_name,
                     "priority": priority_val
                 },
                 "geometry": mapping(geom)
-            })
+            }
 
-    geojson_dict = {
-        "type": "FeatureCollection",
-        "features": features
-    }
+            # All features go into the statistics file
+            features_all.append(feat)
 
-    with geojson_path.open('w', encoding='utf-8') as f:
-        json.dump(geojson_dict, f)
+            # Only visual classes go into the QGIS file
+            if cls_name in conf.class2show:
+                features_vis.append(feat)
+
+    # Save the complete dataset for statistics
+    with geojson_path_all.open('w', encoding='utf-8') as f:
+        json.dump({"type": "FeatureCollection", "features": features_all}, f)
+
+    # Save the filtered dataset for visualization
+    with geojson_path_vis.open('w', encoding='utf-8') as f:
+        json.dump({"type": "FeatureCollection", "features": features_vis}, f)
 
     export_qgis_style(conf, qml_path, logger)
-    logger.info(f"Saved GeoJSON to {geojson_path} and corresponding QML styling.")
+    logger.info(f"Saved visualization GeoJSON to {geojson_path_vis} and complete GeoJSON to {geojson_path_all}")
 
 
 def generate_global_cog(conf, all_passage_data, out_dir, logger):
