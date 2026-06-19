@@ -7,6 +7,12 @@ import json
 import math
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from torchmetrics.classification import (
+    MulticlassJaccardIndex,
+    MulticlassPrecision,
+    MulticlassRecall,
+    MulticlassF1Score
+)
 
 
 def stitch(patches, boxes, patch_per_img):
@@ -185,6 +191,7 @@ class CBCSeg(pl.LightningModule):
             weight_decay=1e-4,
             eta_min=1e-6,
             patch_per_img=21,
+            ignore_index=255,
             save_json=False,
             approx_epsilon_factor=0.002,
             min_polygon_area=250.0,
@@ -193,13 +200,15 @@ class CBCSeg(pl.LightningModule):
             semaphore_lim=256,
             output_dir=None,
             cmap=None,
-            class_mapping=None
+            class_mapping=None,
+            logger=None,
     ):
         super().__init__()
         self.lr = lr
         self.weight_decay = weight_decay
         self.eta_min = eta_min
         self.patch_per_img = patch_per_img
+        self.ignore_index = ignore_index
         self.save_json = save_json
         self.approx_epsilon_factor = approx_epsilon_factor
         self.min_polygon_area = min_polygon_area
@@ -209,8 +218,16 @@ class CBCSeg(pl.LightningModule):
         self.output_dir = output_dir
         self.cmap = cmap
         self.class_mapping = class_mapping
+        self.custom_logger = logger
         self.executor = None
         self.task_semaphore = None
+
+        if class_mapping is not None:
+            num_classes = len(class_mapping)
+            self.val_iou = MulticlassJaccardIndex(num_classes=num_classes, ignore_index=ignore_index, average='none')
+            self.val_precision = MulticlassPrecision(num_classes=num_classes, ignore_index=ignore_index, average='none')
+            self.val_recall = MulticlassRecall(num_classes=num_classes, ignore_index=ignore_index, average='none')
+            self.val_f1 = MulticlassF1Score(num_classes=num_classes, ignore_index=ignore_index, average='none')
 
     def forward(self, x):
         return x
@@ -253,6 +270,91 @@ class CBCSeg(pl.LightningModule):
     def on_predict_end(self):
         # Wait for all remaining background tasks to finish when prediction completes
         self.executor.shutdown(wait=True)
+
+    def validation_step(self, batch, batch_idx):
+        patches, boxes, masks = batch
+
+        # Forward pass
+        outputs = self(patches)
+
+        # Stitching
+        logits = stitch(outputs, boxes, self.patch_per_img)
+
+        # Computation and accumulation of the metrics on each batch
+        for i in range(len(logits)):
+            pred = torch.argmax(logits[i], dim=0)
+            gt_mask = masks[i].to(pred.device)
+
+            pred = pred.unsqueeze(0)
+            gt_mask = gt_mask.unsqueeze(0)
+
+            self.val_iou.update(pred, gt_mask)
+            self.val_precision.update(pred, gt_mask)
+            self.val_recall.update(pred, gt_mask)
+            self.val_f1.update(pred, gt_mask)
+
+    def on_validation_epoch_end(self):
+        # Compute score tensors for each class
+        iou_per_class = self.val_iou.compute()
+        prec_per_class = self.val_precision.compute()
+        rec_per_class = self.val_recall.compute()
+        f1_per_class = self.val_f1.compute()
+
+        # Invert dictionary to have {index: "class_name"}
+        idx_to_class = {v: k for k, v in self.class_mapping.items()}
+
+        # Get background index
+        bg_idx = self.class_mapping.get('background', -1)
+
+        valid_indices = []
+
+        self.custom_logger.info('\n')
+        self.custom_logger.info('-' * 70)
+        self.custom_logger.info("Validation results (per class):")
+
+        for idx in idx_to_class.keys():
+            cls_name = idx_to_class[idx]
+
+            is_all_zero = (
+                    iou_per_class[idx] == 0 and
+                    prec_per_class[idx] == 0 and
+                    rec_per_class[idx] == 0 and
+                    f1_per_class[idx] == 0
+            )
+            if is_all_zero:
+                self.custom_logger.info(
+                    f"  - {cls_name:<30}: ignored (all metrics are 0.0)"
+                )
+            else:
+                if idx != bg_idx:
+                    valid_indices.append(idx)
+                self.custom_logger.info(
+                    f"  - {cls_name:<30}: "
+                    f"IoU = {iou_per_class[idx]:.4f} | "
+                    f"Prec = {prec_per_class[idx]:.4f} | "
+                    f"Rec = {rec_per_class[idx]:.4f} | "
+                    f"F1 = {f1_per_class[idx]:.4f}"
+                )
+
+        # Mean computation
+        m_iou = iou_per_class[valid_indices].mean()
+        m_prec = prec_per_class[valid_indices].mean()
+        m_rec = rec_per_class[valid_indices].mean()
+        m_f1 = f1_per_class[valid_indices].mean()
+
+        self.custom_logger.info("-" * 70)
+        self.custom_logger.info("Macro averages (excluding background):")
+        self.custom_logger.info(f"  - mIoU      : {m_iou:.4f}")
+        self.custom_logger.info(f"  - mPrecision: {m_prec:.4f}")
+        self.custom_logger.info(f"  - mRecall   : {m_rec:.4f}")
+        self.custom_logger.info(f"  - mF1-score : {m_f1:.4f}")
+        self.custom_logger.info('-' * 70)
+
+        # Reset des métriques
+        self.val_iou.reset()
+        self.val_precision.reset()
+        self.val_recall.reset()
+        self.val_f1.reset()
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(

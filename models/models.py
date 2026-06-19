@@ -2,16 +2,17 @@ from models.deeplabv3plus import DeepLabV3Plus
 from models.pidnet import PIDNet
 
 
-def get_model(task, conf, ckpt_path=None, output_dir=None, cmap=None):
+def get_model(task, conf, ckpt_path=None, output_dir=None, cmap=None, logger=None):
     """
     :param conf:
     :param task:
         'train' -> training
-        'inference' -> inference
+        'inference' or 'validate' -> inference
         'load' -> load from checkpoint
     :param ckpt_path:
     :param output_dir:
     :param cmap:
+    :param logger:
     :return:
     """
     if task == 'train':
@@ -35,12 +36,13 @@ def get_model(task, conf, ckpt_path=None, output_dir=None, cmap=None):
             )
         else:
             raise NotImplementedError
-    elif task == 'inference':
+    elif task == 'inference' or task == 'validate':
         if conf.name == 'deeplabv3+_mitb2':
             model = DeepLabV3Plus.load_from_checkpoint(
                 ckpt_path,
                 num_classes=conf.num_classes,
                 patch_per_img=conf.patch_per_row*conf.patch_per_col,
+                ignore_index=conf.ignore_index,
                 save_json=conf.save_json,
                 approx_epsilon_factor=conf.approx_epsilon_factor,
                 min_polygon_area=conf.min_polygon_area,
@@ -49,13 +51,15 @@ def get_model(task, conf, ckpt_path=None, output_dir=None, cmap=None):
                 semaphore_lim=conf.semaphore_lim,
                 output_dir=output_dir,
                 cmap=cmap,
-                class_mapping=conf.class_mapping
+                class_mapping=conf.class_mapping,
+                logger=logger
             )
         elif conf.name == 'pidnet_l':
             model = PIDNet.load_from_checkpoint(
                 ckpt_path,
                 num_classes=conf.num_classes,
                 patch_per_img=conf.patch_per_row*conf.patch_per_col,
+                ignore_index=conf.ignore_index,
                 save_json=conf.save_json,
                 approx_epsilon_factor=conf.approx_epsilon_factor,
                 min_polygon_area=conf.min_polygon_area,
@@ -64,7 +68,8 @@ def get_model(task, conf, ckpt_path=None, output_dir=None, cmap=None):
                 semaphore_lim=conf.semaphore_lim,
                 output_dir=output_dir,
                 cmap=cmap,
-                class_mapping = conf.class_mapping
+                class_mapping = conf.class_mapping,
+                logger=logger
             )
         else:
             raise NotImplementedError

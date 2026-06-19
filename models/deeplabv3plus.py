@@ -10,7 +10,6 @@ class DeepLabV3Plus(CBCSeg):
             num_classes=19,
             tversky_alpha=0.3,
             tversky_beta=0.7,
-            ignore_index=255,
             **kwargs
     ):
         super().__init__(*args, **kwargs)
@@ -26,14 +25,14 @@ class DeepLabV3Plus(CBCSeg):
         # Focal Loss: Handles pixel-wise extreme class imbalance
         self.focal_loss = smp.losses.FocalLoss(
             mode=smp.losses.MULTICLASS_MODE,
-            ignore_index=ignore_index
+            ignore_index=self.ignore_index
         )
         # Tversky Loss: Favors False Positives over False Negatives to close gaps
         self.tversky_loss = smp.losses.TverskyLoss(
             mode=smp.losses.MULTICLASS_MODE,
             alpha=tversky_alpha,
             beta=tversky_beta,
-            ignore_index=ignore_index
+            ignore_index=self.ignore_index
         )
 
     def forward(self, x):

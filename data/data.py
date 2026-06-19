@@ -8,6 +8,30 @@ from pathlib import Path
 from data.augmentation import get_train_transform, get_test_transform
 
 
+def get_class_image_counts(mask_paths: list, class_mapping: dict, ignore_index: int = 255) -> dict:
+    """
+    Calculates how many annotated images contain each class based on a list of mask paths.
+    """
+    # Initialize counts class mapping names
+    counts = {cls_name: 0 for cls_name in class_mapping.keys()}
+    # Reverse mapping to get class names from indices
+    index_to_name = {v: k for k, v in class_mapping.items()}
+
+    for path in mask_paths:
+        # Read mask as grayscale numpy array
+        mask = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        # Find unique values in the mask tensor
+        unique_classes = np.unique(mask).tolist()
+
+        for cls_idx in unique_classes:
+            if cls_idx == ignore_index:
+                continue
+            if cls_idx in index_to_name:
+                counts[index_to_name[cls_idx]] += 1
+
+    return counts
+
+
 class ImageDataset(Dataset):
 
     def __init__(
@@ -88,10 +112,15 @@ class ImageDataset(Dataset):
         patches = np.stack(patches, axis=0)
         patches = torch.from_numpy(patches).permute(0, 3, 1, 2)
 
-        return img , name, self.transform(patches), tuple(boxes)
+        return img, name, self.transform(patches), tuple(boxes)
 
 
-def image_collate_fn(batch: list) ->  tuple[tuple[torch.Tensor, ...], tuple[str, ...], torch.Tensor, tuple[tuple[int, int, int, int], ...]]:
+def image_collate_fn(batch: list) ->  tuple[
+    tuple[torch.Tensor, ...],
+    tuple[str, ...],
+    torch.Tensor,
+    tuple[tuple[int, int, int, int], ...]
+]:
     all_imgs = tuple(item[0] for item in batch)
     all_names = tuple(item[1] for item in batch)
     # item[2] is a tensor of shape (patch_per_img, C, patch_size, patch_size)
@@ -101,6 +130,44 @@ def image_collate_fn(batch: list) ->  tuple[tuple[torch.Tensor, ...], tuple[str,
     # sum(..., ()) cleanly flattens the list of tuples into one giant tuple of boxes
     all_boxes = sum((item[3] for item in batch), ())
     return all_imgs, all_names, all_patches, all_boxes
+
+
+class ValImageMaskDataset(ImageDataset):
+    def __init__(
+            self,
+            folder: Path | str,
+            *args,
+            **kwargs
+    ) -> None:
+        super().__init__(folder, *args, **kwargs)
+        valid_paths = []
+        self.mask_paths = []
+        for p in self.paths:
+            mask_p = p.with_name(f"{p.stem}_mask.png")
+            if mask_p.is_file():
+                valid_paths.append(p)
+                self.mask_paths.append(mask_p)
+        self.paths = valid_paths
+
+    def __getitem__(self, item):
+        _, _, patches, boxes = super().__getitem__(item)
+
+        mask = cv2.imread(str(self.mask_paths[item]), cv2.IMREAD_GRAYSCALE)
+        mask = torch.from_numpy(mask).long()
+
+        return patches, boxes, mask
+
+
+def val_image_mask_collate_fn(batch: list) -> tuple[
+    torch.Tensor,
+    tuple[tuple[int, int, int, int], ...],
+    tuple[torch.Tensor, ...]
+]:
+    all_patches = torch.cat([item[0] for item in batch], dim=0)
+    all_boxes = sum((item[1] for item in batch), ())
+    all_masks = tuple(item[2] for item in batch)
+
+    return all_patches, all_boxes, all_masks
 
 
 class ImageMaskDataset(ImageDataset):
@@ -113,29 +180,6 @@ class ImageMaskDataset(ImageDataset):
     ) -> None:
         super().__init__(folder, *args, **kwargs)
         self.paths = sorted(Path(folder).rglob('*_mask.png'))
-
-    def get_class_image_counts(self, class_mapping: dict, ignore_index: int = 255) -> dict:
-        """
-        Calculates how many annotated images contain each class.
-        """
-        # Initialize counts class mapping names
-        counts = {cls_name: 0 for cls_name in class_mapping.keys()}
-        # Reverse mapping to get class names from indices
-        index_to_name = {v: k for k, v in class_mapping.items()}
-
-        for path in self.paths:
-            # Read mask as grayscale numpy array
-            mask = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-            # Find unique values in the mask tensor
-            unique_classes = np.unique(mask).tolist()
-
-            for cls_idx in unique_classes:
-                if cls_idx == ignore_index:
-                    continue
-                if cls_idx in index_to_name:
-                    counts[index_to_name[cls_idx]] += 1
-
-        return counts
 
     def __getitem__(
             self,
@@ -235,6 +279,7 @@ class ImageDataModule(pl.LightningDataModule):
         self.logger = logger
         self.train_dataset = None
         self.predict_dataset = None
+        self.val_dataset = None
 
     def setup(self, stage=None):
         if stage == 'fit' or stage is None:
@@ -244,7 +289,7 @@ class ImageDataModule(pl.LightningDataModule):
                 patch_size=self.conf.patch_size,
                 ignore_index=self.conf.ignore_index
             )
-            class_counts = self.train_dataset.get_class_image_counts(self.conf.class_mapping, self.conf.ignore_index)
+            class_counts = get_class_image_counts(self.train_dataset.paths, self.conf.class_mapping, self.conf.ignore_index)
             self.logger.info('-' * 70)
             self.logger.info(f"Training on {len(self.train_dataset)} annotated images")
             self.logger.info("Number of images containing each class:")
@@ -262,6 +307,23 @@ class ImageDataModule(pl.LightningDataModule):
             )
             self.logger.info('-' * 70)
             self.logger.info(f"Inference on {len(self.predict_dataset)} images")
+            self.logger.info('-' * 70)
+
+        if stage == 'validate' or stage is None:
+            self.val_dataset = ValImageMaskDataset(
+                folder=self.conf.eval_data_dir,
+                patch_per_row=self.conf.patch_per_row,
+                patch_per_col=self.conf.patch_per_col,
+                patch_size=self.conf.patch_size,
+                patch_overlap=self.conf.patch_overlap
+            )
+            class_counts = get_class_image_counts(self.val_dataset.mask_paths, self.conf.class_mapping,
+                                                  self.conf.ignore_index)
+            self.logger.info('-' * 70)
+            self.logger.info(f"Validation on {len(self.val_dataset)} annotated images")
+            self.logger.info("Number of images containing each class:")
+            for cls_name, count in class_counts.items():
+                self.logger.info(f"  - {cls_name}: {count}")
             self.logger.info('-' * 70)
 
     def train_dataloader(self):
@@ -284,4 +346,15 @@ class ImageDataModule(pl.LightningDataModule):
             persistent_workers=True,
             pin_memory=self.conf.use_gpu,
             collate_fn=image_collate_fn
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=self.conf.num_workers,
+            persistent_workers=True,
+            pin_memory=self.conf.use_gpu,
+            collate_fn=val_image_mask_collate_fn
         )

@@ -16,11 +16,9 @@ class PIDNet(CBCSeg):
             self,
             *args,
             num_classes=19,
-            ignore_index=255,
             **kwargs
     ):
         super().__init__(*args, **kwargs)
-        self.ignore_index = ignore_index
 
         # MMSegmentation configuration for PIDNet-Large
         model_cfg = ConfigDict(
@@ -31,7 +29,7 @@ class PIDNet(CBCSeg):
                 std=None,
                 bgr_to_rgb=False,
                 pad_val=0,
-                seg_pad_val=ignore_index,
+                seg_pad_val=self.ignore_index,
                 size=None
             ),
             backbone=dict(
@@ -50,7 +48,7 @@ class PIDNet(CBCSeg):
                 in_channels=256,
                 channels=256,
                 num_classes=num_classes,
-                ignore_index=ignore_index,
+                ignore_index=self.ignore_index,
                 align_corners=True,
                 norm_cfg=dict(type='SyncBN', requires_grad=True),
                 act_cfg=dict(type='ReLU', inplace=True),
