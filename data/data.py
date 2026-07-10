@@ -40,7 +40,8 @@ class ImageDataset(Dataset):
             patch_per_row: int = 7,
             patch_per_col:int = 3,
             patch_size: int = 1024,
-            patch_overlap: float = 0.5
+            patch_overlap: float = 0.5,
+            name_format: str = 'stem'
     ) -> None:
         super().__init__()
 
@@ -48,7 +49,6 @@ class ImageDataset(Dataset):
         paths_file = folder_path / "paths.txt"
 
         if paths_file.is_file():
-            self.split_name = True
             all_paths = []
             with paths_file.open('r', encoding='utf-8') as f:
                 for line in f:
@@ -58,7 +58,6 @@ class ImageDataset(Dataset):
                         all_paths.extend(target_dir.rglob('*.jpg'))
             self.paths = sorted(all_paths)
         else:
-            self.split_name = False
             self.paths = sorted(folder_path.rglob('*.jpg'))
 
         self.patch_per_row = patch_per_row
@@ -67,6 +66,7 @@ class ImageDataset(Dataset):
         self.patch_size = patch_size
         assert 0.0 <= patch_overlap < 1.0, 'patch_overlap must be in [0, 1)'
         self.patch_overlap = patch_overlap
+        self.name_format = name_format
         self.transform = get_test_transform()
 
     def __len__(self) -> int:
@@ -79,10 +79,14 @@ class ImageDataset(Dataset):
         img = cv2.imread(str(path), cv2.IMREAD_COLOR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        if self.split_name:
+        if self.name_format == 'parent':
             name = f"{path.parent.name}_{path.stem}"
-        else:
+        elif self.name_format == 'stem':
             name = path.stem
+        elif self.name_format == 'path':
+            name = path
+        else:
+            raise NotImplementedError
 
         H, W, _ = img.shape
         Pw = W / (1 + (self.patch_per_row - 1) * (1 - self.patch_overlap)) if self.patch_per_row > 1 else W
@@ -303,7 +307,8 @@ class ImageDataModule(pl.LightningDataModule):
                 patch_per_row=self.conf.patch_per_row,
                 patch_per_col=self.conf.patch_per_col,
                 patch_size=self.conf.patch_size,
-                patch_overlap=self.conf.patch_overlap
+                patch_overlap=self.conf.patch_overlap,
+                name_format=self.conf.name_format
             )
             self.logger.info('-' * 70)
             self.logger.info(f"Inference on {len(self.predict_dataset)} images")
