@@ -1,9 +1,5 @@
 class_config: class_config
 # ================================================================================
-## JSON to mask
-data_dir: C:/Users/Admin/Data/annotation
-ignore_index: 255
-# ================================================================================
 ## train
 seed: 42
 name: pidnet_l  # deeplabv3+_mitb2
@@ -46,3 +42,33 @@ save_json: true
 approx_epsilon_factor: 0.002
 min_polygon_area: 250.0
 edge_margin: 5
+# ================================================================================
+## positioning
+input_dir: C:\Users\Admin\Data\tests_dmi\2026_07_30
+output_dir: C:\Users\Admin\Data\tests_dmi\2026_07_30\143041_range
+generate_cog: true
+read_csv: false
+apply_correction: true
+# projection
+crs_gps: EPSG:4326
+crs_projected: EPSG:3944
+# camera offset
+cam_offset_x: 0.0  # lateral, in meters
+cam_offset_y: 3.88 # 3.7  # longitudinal, in meters
+# smoothing
+method: range
+gps_error_variance: 0.5
+vehicle_step: 1.3  # in meters
+# image dimension
+downscale_factor: 0.25
+span_width: 2.95  # in meters
+# COG
+merge_window_size: 2048
+# display detections
+generate_detections: false
+detection_dir: C:/Users/Admin/Data/mdm_p1/mdm_p1_json
+class2show:
+    fissure souple: [255, 0, 0]
+    vegetation: [255, 0, 0]
+    fissure souple reparee: [0, 0, 255]
+    depart de materiaux souple: [0, 255, 0]
