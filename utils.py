@@ -10,6 +10,19 @@ from types import SimpleNamespace
 from pathlib import Path
 
 
+def get_one_conf(logger, verbose=True):
+    filename = sys.argv[1]
+    config_path = Path('.') / Path('config') / f'{filename}.yaml'
+    conf = yaml.safe_load(config_path.read_text())
+    conf = SimpleNamespace(**conf)
+    if verbose:
+        logger.info('-' * 70)
+        for key, value in vars(conf).items():
+            logger.info(f'{key} : {value}')
+        logger.info('-' * 70)
+    return conf
+
+
 def get_conf(logger, verbose=True):
     filename = sys.argv[1]
     config_path = Path('.') / Path('config') / f'{filename}.yaml'

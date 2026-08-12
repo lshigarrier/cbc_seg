@@ -187,6 +187,22 @@ def process_detections(conf, all_passage_data, out_dir, logger):
     logger.info(f"Saved visualization GeoJSON to {geojson_path_vis} and complete GeoJSON to {geojson_path_all}")
 
 
+def to_win_coords(u, v, args):
+    w_low, h_low, pixel_to_meter, x_c, y_c, hdt, min_gx, max_gy, col_off, row_off = args
+
+    dx_pix = u - w_low / 2.0
+    dy_pix = h_low / 2.0 - v
+    dx_m = dx_pix * pixel_to_meter
+    dy_m = dy_pix * pixel_to_meter
+
+    gx = x_c + dy_m * math.cos(hdt) + dx_m * math.sin(hdt)
+    gy = y_c + dy_m * math.sin(hdt) - dx_m * math.cos(hdt)
+
+    c = (gx - min_gx) / pixel_to_meter - col_off
+    r = (max_gy - gy) / pixel_to_meter - row_off
+    return [c, r]
+
+
 def generate_global_cog(conf, all_passage_data, out_dir, logger):
     """
     Creates a single global mosaic directly on disk by iterating over spatial windows,
@@ -316,24 +332,12 @@ def generate_global_cog(conf, all_passage_data, out_dir, logger):
                     img_low = cv2.resize(img, (w_low, h_low))
 
                     x_c, y_c, hdt = meta['x_c'], meta['y_c'], meta['hdt']
-
-                    def to_win_coords(u, v):
-                        dx_pix = u - w_low / 2.0
-                        dy_pix = h_low / 2.0 - v
-                        dx_m = dx_pix * pixel_to_meter
-                        dy_m = dy_pix * pixel_to_meter
-
-                        gx = x_c + dy_m * math.cos(hdt) + dx_m * math.sin(hdt)
-                        gy = y_c + dy_m * math.sin(hdt) - dx_m * math.cos(hdt)
-
-                        c = (gx - min_gx) / pixel_to_meter - col_off
-                        r = (max_gy - gy) / pixel_to_meter - row_off
-                        return [c, r]
+                    to_win_coords_args = (w_low, h_low, pixel_to_meter, x_c, y_c, hdt, min_gx, max_gy, col_off, row_off)
 
                     src_pts = np.float32([[w_low / 2, h_low / 2], [w_low, h_low / 2], [w_low / 2, 0]])
-                    dst_pts = np.float32([to_win_coords(w_low / 2, h_low / 2),
-                                          to_win_coords(w_low, h_low / 2),
-                                          to_win_coords(w_low / 2, 0)])
+                    dst_pts = np.float32([to_win_coords(w_low / 2, h_low / 2, to_win_coords_args),
+                                          to_win_coords(w_low, h_low / 2, to_win_coords_args),
+                                          to_win_coords(w_low / 2, 0, to_win_coords_args)])
 
                     M_warp = cv2.getAffineTransform(src_pts, dst_pts)
 

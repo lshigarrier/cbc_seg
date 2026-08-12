@@ -1,10 +1,11 @@
-save_dir: C:/Users/Admin/Data/ba105_results
-inference_flag: true
-mosaic_flag: true
-postprocessing_flag: true
+save_dir: C:\Users\Admin\Data\ba105_results
+seed: 42
+inference_flag: false
+positioning_flag: true
+postprocessing_flag: false
 # ================================================================================
 ## inference
-ckpt_path: C:/Users/Admin/Code/cbc_seg/output/pidnet_l/version_1/checkpoints/epoch=973.ckpt
+ckpt_path: C:\Users\Admin\Code\cbc_seg\output\pidnet_l\version_1\checkpoints\epoch=973.ckpt
 deterministic: false
 # dataset
 patch_per_row: 7
@@ -47,7 +48,47 @@ approx_epsilon_factor: 0.002
 min_polygon_area: 250.0
 edge_margin: 5
 # ================================================================================
-## mosaic
-
+## positioning
+apply_correction: true
+# projection
+crs_gps: EPSG:4326
+crs_projected: EPSG:3944
+# camera offset
+cam_offset_x: 0.0  # lateral, in meters
+cam_offset_y: 3.88 # 3.7  # longitudinal, in meters
+# smoothing
+method: range
+gps_error_variance: 0.5
+# image dimension
+downscale_factor: 0.05
+span_width: 2.95  # in meters
+# COG
+merge_window_size: 2048
+# define priority: lowest priority first, highest priority last
+priority_list:
+    - marquage
+    - faiencage
+    - remontee de fines
+    - depot de gomme
+    - jonction
+    - ressuage
+    - joint
+    - defaut de joint
+    - desenrobage
+    - fissure souple reparee
+    - fissure rigide reparee
+    - fissure souple
+    - fissure rigide
+    - depart de materiaux rigide
+    - depart de materiaux souple
+    - objet
+    - vegetation
+    - autre
+# display detections
+class2show:
+    fissure souple: [255, 0, 0]
+    vegetation: [255, 0, 0]
+    fissure souple reparee: [0, 0, 255]
+    depart de materiaux souple: [0, 255, 0]
 # ================================================================================
 ## postprocessing
