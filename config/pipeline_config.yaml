@@ -1,8 +1,7 @@
 save_dir: C:\Users\Admin\Data\ba105_results
 seed: 42
-inference_flag: false
-positioning_flag: true
-postprocessing_flag: false
+inference_flag: true
+postprocessing_flag: true
 # ================================================================================
 ## inference
 ckpt_path: C:\Users\Admin\Code\cbc_seg\output\pidnet_l\version_1\checkpoints\epoch=973.ckpt
@@ -12,7 +11,7 @@ patch_per_row: 7
 patch_per_col: 3
 patch_size: 1024
 patch_overlap: 0.5
-name_format: parent
+name_format: path
 # dataloader
 num_workers: 8
 use_gpu: true
@@ -92,3 +91,21 @@ class2show:
     depart de materiaux souple: [0, 255, 0]
 # ================================================================================
 ## postprocessing
+# true for linear defects, false for surface defects
+class_type:
+    fissure souple: true
+    fissure souple reparee: true
+    depart de materiaux souple: false
+    desenrobage: false
+    remontee de fines: false
+    ressuage: false
+    depot de gomme: false
+    fissure rigide: true
+    fissure rigide reparee: true
+    depart de materiaux rigide: false
+    faiencage: false
+    defaut de joint: true
+    vegetation: true
+raster_res: 0.75  # in mm
+bin_width: 2.5  # in mm
+num_bins: 11

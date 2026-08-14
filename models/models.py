@@ -2,7 +2,7 @@ from models.deeplabv3plus import DeepLabV3Plus
 from models.pidnet import PIDNet
 
 
-def get_model(task, conf, ckpt_path=None, output_dir=None, cmap=None, logger=None):
+def get_model(task, conf, ckpt_path=None, output_dir=None, routing_map=None, cmap=None, logger=None):
     """
     :param conf:
     :param task:
@@ -11,6 +11,7 @@ def get_model(task, conf, ckpt_path=None, output_dir=None, cmap=None, logger=Non
         'load' -> load from checkpoint
     :param ckpt_path:
     :param output_dir:
+    :param routing_map:
     :param cmap:
     :param logger:
     :return:
@@ -50,6 +51,7 @@ def get_model(task, conf, ckpt_path=None, output_dir=None, cmap=None, logger=Non
                 inference_workers=conf.thread_workers,
                 semaphore_lim=conf.semaphore_lim,
                 output_dir=output_dir,
+                routing_map=routing_map,
                 cmap=cmap,
                 class_mapping=conf.class_mapping,
                 logger=logger
@@ -67,6 +69,7 @@ def get_model(task, conf, ckpt_path=None, output_dir=None, cmap=None, logger=Non
                 inference_workers=conf.thread_workers,
                 semaphore_lim=conf.semaphore_lim,
                 output_dir=output_dir,
+                routing_map=routing_map,
                 cmap=cmap,
                 class_mapping = conf.class_mapping,
                 logger=logger

@@ -77,9 +77,9 @@ def compute_statistics(conf, out_dir, logger):
     input_file = out_dir / "detections.geojson"
     output_file = out_dir / "statistics.json"
 
-    logger.info(f"Loading geometries from {input_file}")
+    logger.info(f"  Loading geometries from {input_file}")
     if not input_file.exists():
-        logger.error(f"Input file {input_file} does not exist.")
+        logger.error(f"  Input file {input_file} does not exist.")
         return
 
     gdf = gpd.read_file(input_file)
@@ -124,7 +124,7 @@ def compute_statistics(conf, out_dir, logger):
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=4)
 
-    logger.info("Statistics computation completed successfully.")
+    logger.info("  Statistics computation completed successfully.")
 
 
 def generate_histograms(out_dir, logger):
@@ -134,7 +134,7 @@ def generate_histograms(out_dir, logger):
     """
     stats_path = out_dir / "statistics.json"
     if not stats_path.exists():
-        logger.error("Cannot generate histograms: statistics.json not found.")
+        logger.error("  Cannot generate histograms: statistics.json not found.")
         return
 
     with open(stats_path, "r", encoding="utf-8") as f:

@@ -11,6 +11,7 @@ from collections import defaultdict
 from shapely.geometry import Polygon, mapping
 from shapely.ops import unary_union
 from shapely.ops import transform as shapely_transform
+from typing import Dict, List, Any
 
 
 def export_qgis_style(conf, qml_path, logger):
@@ -20,9 +21,11 @@ def export_qgis_style(conf, qml_path, logger):
     for idx, (cls_name, color) in enumerate(conf.class2show.items()):
         color_str = f"{color[0]},{color[1]},{color[2]},255"
 
+        # language=text
         categories_xml.append(
             f'<category symbol="{idx}" value="{cls_name}" label="{cls_name}"/>'
         )
+        # language=text
         symbols_xml.append(f"""
         <symbol name="{idx}" type="fill" force_rhr="0" alpha="1" clip_to_extent="1">
           <layer pass="0" class="SimpleFill" locked="0">
@@ -34,6 +37,7 @@ def export_qgis_style(conf, qml_path, logger):
           </layer>
         </symbol>""")
 
+    # language=text
     qml_content = f"""<!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>
 <qgis version="3.0.0">
   <renderer-v2 type="categorizedSymbol" attr="class" enableorderby="1">
@@ -50,11 +54,11 @@ def export_qgis_style(conf, qml_path, logger):
 </qgis>"""
 
     qml_path.write_text(qml_content, encoding='utf-8')
-    logger.info(f"Generated QGIS style file with priority ordering at {qml_path}")
+    logger.info(f"  Generated QGIS style file with priority ordering at {qml_path}")
 
 
 def process_detections(conf, all_passage_data, out_dir, logger):
-    logger.info("Starting detection processing, projection, and export")
+    logger.info("  Starting detection processing, projection, and export")
 
     detection_dir = Path(conf.detection_dir)
 
@@ -62,18 +66,19 @@ def process_detections(conf, all_passage_data, out_dir, logger):
     geojson_path_vis = out_dir / "visible_detections.geojson"
     qml_path = out_dir / "visible_detections.qml"
 
-    image_lookup = {}
+    image_lookup: Dict[str, Dict[str, float]] = {}
     for df_coords, passage_dir in all_passage_data:
         folder_name = passage_dir.name
         for _, row in df_coords.iterrows():
             image_name = Path(row['Image']).stem
-            image_lookup[(folder_name, image_name)] = {
+            key = f"{folder_name}_{image_name}"
+            image_lookup[key] = {
                 'X_corr': row['X_corr'],
                 'Y_corr': row['Y_corr'],
                 'HDT_corr': row['HDT_corr']
             }
 
-    class_polygons = defaultdict(list)
+    class_polygons: Dict[str, List[Polygon]] = defaultdict(list)
 
     for json_path in detection_dir.glob("*.json"):
         with json_path.open('r', encoding='utf-8') as f:
@@ -87,9 +92,10 @@ def process_detections(conf, all_passage_data, out_dir, logger):
         folder_name = "_".join(parts[:-1])
         image_name = parts[-1].split('.')[0]
 
-        lookup_data = image_lookup.get((folder_name, image_name))
+        key = f"{folder_name}_{image_name}"
+        lookup_data = image_lookup.get(key)
         if lookup_data is None:
-            logger.warning(f"Cannot find image ({folder_name}, {image_name})")
+            logger.warning(f"  Cannot find image ({folder_name}, {image_name})")
             continue
 
         x_corr = lookup_data['X_corr']
@@ -130,13 +136,13 @@ def process_detections(conf, all_passage_data, out_dir, logger):
             proj_pts = np.column_stack((x_global, y_global))
             class_polygons[label].append(Polygon(proj_pts))
 
-    logger.info("Merging overlapping polygons by class and projecting to WGS84")
+    logger.info("  Merging overlapping polygons by class and projecting to WGS84")
 
     # Initialize the transformer and the shapely transform wrapper
     transformer = pyproj.Transformer.from_crs(conf.crs_projected, "EPSG:4326", always_xy=True)
 
-    features_all = []
-    features_vis = []
+    features_all: List[Dict[str, Any]] = []
+    features_vis: List[Dict[str, Any]] = []
     for cls_name, polys in class_polygons.items():
         if not polys:
             continue
@@ -149,7 +155,6 @@ def process_detections(conf, all_passage_data, out_dir, logger):
 
         # Transform the merged geometry to WGS84
         merged_poly_wgs84 = shapely_transform(transformer.transform, merged_poly)
-
         geometries = [merged_poly_wgs84] if merged_poly_wgs84.geom_type == 'Polygon' else merged_poly_wgs84.geoms
 
         # Determine the priority integer based on the config list.
@@ -184,7 +189,7 @@ def process_detections(conf, all_passage_data, out_dir, logger):
         json.dump({"type": "FeatureCollection", "features": features_vis}, f)
 
     export_qgis_style(conf, qml_path, logger)
-    logger.info(f"Saved visualization GeoJSON to {geojson_path_vis} and complete GeoJSON to {geojson_path_all}")
+    logger.info(f"  Saved visualization GeoJSON to {geojson_path_vis} and complete GeoJSON to {geojson_path_all}")
 
 
 def to_win_coords(u, v, args):
@@ -209,7 +214,7 @@ def generate_global_cog(conf, all_passage_data, out_dir, logger):
     blending overlapping images, and computing global statistics to avoid aux.xml generation.
     """
     if not all_passage_data:
-        logger.warning("No data provided to generate mosaic.")
+        logger.warning("  No data provided to generate mosaic.")
         return
 
     # Sample first valid image to deduce dimensions and resolution
@@ -284,7 +289,7 @@ def generate_global_cog(conf, all_passage_data, out_dir, logger):
         'interleave': 'pixel'
     }
 
-    logger.info(f"Allocating global GeoTIFF ({width_px}x{height_px} pixels)")
+    logger.info(f"  Allocating global GeoTIFF ({width_px}x{height_px} pixels)")
     out_cog_path = out_dir / "mosaic.tif"
     with rasterio.open(out_cog_path, 'w', **profile) as _:
         pass  # Create empty structure
@@ -298,7 +303,7 @@ def generate_global_cog(conf, all_passage_data, out_dir, logger):
 
     with rasterio.open(out_cog_path, 'r+') as dst:
         for row_off in range(0, height_px, window_size):
-            logger.info(f'Processing row {row_off//window_size + 1}/{height_px//window_size + 1}')
+            logger.info(f'    Processing row {row_off//window_size + 1}/{height_px//window_size + 1}')
             for col_off in range(0, width_px, window_size):
                 win_w = min(window_size, width_px - col_off)
                 win_h = min(window_size, height_px - row_off)
@@ -362,4 +367,4 @@ def generate_global_cog(conf, all_passage_data, out_dir, logger):
 
                 dst.write(avg_arr, window=Window(col_off, row_off, win_w, win_h))
 
-    logger.info(f"Global mosaic generation complete: {out_cog_path}")
+    logger.info(f"  Global mosaic generation complete: {out_cog_path}")

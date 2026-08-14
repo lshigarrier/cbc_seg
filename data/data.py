@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
+from collections.abc import Iterable
 
 from data.augmentation import get_train_transform, get_test_transform
 
@@ -36,7 +37,7 @@ class ImageDataset(Dataset):
 
     def __init__(
             self,
-            folder: Path | str,
+            folder: Path | str | Iterable,
             patch_per_row: int = 7,
             patch_per_col:int = 3,
             patch_size: int = 1024,
@@ -45,20 +46,26 @@ class ImageDataset(Dataset):
     ) -> None:
         super().__init__()
 
-        folder_path = Path(folder)
-        paths_file = folder_path / "paths.txt"
+        if isinstance(folder, Iterable) and not isinstance(folder, (str, Path)):
 
-        if paths_file.is_file():
-            all_paths = []
-            with paths_file.open('r', encoding='utf-8') as f:
-                for line in f:
-                    cleaned_path = line.strip().strip('"').strip("'")
-                    if cleaned_path:
-                        target_dir = Path(cleaned_path)
-                        all_paths.extend(target_dir.rglob('*.jpg'))
-            self.paths = sorted(all_paths)
+            self.paths = sorted([Path(p) for p in folder])
+
         else:
-            self.paths = sorted(folder_path.rglob('*.jpg'))
+
+            folder_path = Path(folder)
+            paths_file = folder_path / "paths.txt"
+
+            if paths_file.is_file():
+                all_paths = []
+                with paths_file.open('r', encoding='utf-8') as f:
+                    for line in f:
+                        cleaned_path = line.strip().strip('"').strip("'")
+                        if cleaned_path:
+                            target_dir = Path(cleaned_path)
+                            all_paths.extend(target_dir.rglob('*.jpg'))
+                self.paths = sorted(all_paths)
+            else:
+                self.paths = sorted(folder_path.rglob('*.jpg'))
 
         self.patch_per_row = patch_per_row
         self.patch_per_col = patch_per_col

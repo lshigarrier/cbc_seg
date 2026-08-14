@@ -199,6 +199,7 @@ class CBCSeg(pl.LightningModule):
             inference_workers=32,
             semaphore_lim=256,
             output_dir=None,
+            routing_map=None,
             cmap=None,
             class_mapping=None,
             logger=None,
@@ -216,6 +217,7 @@ class CBCSeg(pl.LightningModule):
         self.inference_workers = inference_workers
         self.semaphore_lim = semaphore_lim
         self.output_dir = output_dir
+        self.routing_map = routing_map
         self.cmap = cmap
         self.class_mapping = class_mapping
         self.custom_logger = logger
@@ -250,19 +252,42 @@ class CBCSeg(pl.LightningModule):
         # Processing & Saving
         for b in range(len(images)):
             mask_idx = torch.argmax(logits[b], dim=0).cpu().numpy()
+
+            img_path = names[b]
+            if self.routing_map:
+                if str(img_path) not in self.routing_map:
+                    continue
+                zone_name = self.routing_map[str(img_path)]
+                current_out_dir = self.output_dir / zone_name / "detections"
+                img_name = f"{img_path.parent.name}_{img_path.stem}"
+            else:
+                current_out_dir = self.output_dir
+                img_name = img_path
+
             # Acquire semaphore (will block if too many tasks are already pending)
             self.task_semaphore.acquire()
             # Submit task to the worker pool
             if self.save_json:
                 self.executor.submit(
                     mask_to_xanylabelling_json,
-                    mask_idx, self.class_mapping, names[b], self.output_dir, self.task_semaphore,
-                    self.approx_epsilon_factor, self.min_polygon_area, self.edge_margin
+                    mask_idx,
+                    self.class_mapping,
+                    img_name,
+                    current_out_dir,
+                    self.task_semaphore,
+                    self.approx_epsilon_factor,
+                    self.min_polygon_area,
+                    self.edge_margin
                 )
             else:
                 self.executor.submit(
                     process_and_save,
-                    images[b], mask_idx, names[b], self.output_dir, self.cmap, self.task_semaphore
+                    images[b],
+                    mask_idx,
+                    img_name,
+                    current_out_dir,
+                    self.cmap,
+                    self.task_semaphore
                 )
 
         return 0
