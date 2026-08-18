@@ -144,7 +144,7 @@ def run_postprocessing(conf, logger, df_routed):
         return
 
     for zone_name, df_zone in df_routed.groupby('Area'):
-        logger.info(f"Generating outputs for zone: {zone_name}")
+        logger.info(f"Generating outputs for area: {zone_name}")
 
         zone_out_dir = conf.save_dir / zone_name
 

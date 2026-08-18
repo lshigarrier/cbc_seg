@@ -8,31 +8,76 @@ from rasterio.features import rasterize
 from rasterio.transform import from_origin
 from scipy.ndimage import distance_transform_edt
 from skimage.morphology import skeletonize
+from shapely.geometry import box
 
 from utils import logging_conf, get_conf, CustomTimer
 
 
-def process_linear_geometry(geom, res_m, bin_width_mm, num_bins):
+def chunk_geometry_recursive(geom, chunk_size_m=5.0):
     """
-    Rasterize a linear geometry, extract its skeleton, and compute the width
-    at each skeleton pixel using a Euclidean Distance Transform.
+    Recursively split a large geometry into smaller chunks to avoid CPU bottlenecks.
+    Uses a QuadTree approach based on bounding boxes.
+    """
+    if geom.is_empty:
+        return []
+
+    minx, miny, maxx, maxy = geom.bounds
+    width = maxx - minx
+    height = maxy - miny
+
+    # Base case: bounding box is smaller than or equal to the chunk size
+    if width <= chunk_size_m and height <= chunk_size_m:
+        if geom.geom_type in ['Polygon', 'MultiPolygon']:
+            return geom.geoms if geom.geom_type == 'MultiPolygon' else [geom]
+        elif geom.geom_type == 'GeometryCollection':
+            parts = []
+            for part in geom.geoms:
+                if part.geom_type in ['Polygon', 'MultiPolygon']:
+                    parts.extend(part.geoms if part.geom_type == 'MultiPolygon' else [part])
+            return parts
+        return []
+
+    chunks = []
+    midx = minx + width / 2.0
+    midy = miny + height / 2.0
+
+    # Define the 4 quadrants
+    quadrants = [
+        box(minx, miny, midx, midy),
+        box(midx, miny, maxx, midy),
+        box(minx, midy, midx, maxy),
+        box(midx, midy, maxx, maxy)
+    ]
+
+    for quad in quadrants:
+        # Fast bounding box check before exact intersection
+        if geom.intersects(quad):
+            intersection = geom.intersection(quad)
+            if not intersection.is_empty:
+                # Recursively chunk the intersection
+                chunks.extend(chunk_geometry_recursive(intersection, chunk_size_m))
+
+    return chunks
+
+
+def process_geometry_chunk(geom, res_m, bin_width_mm, num_bins):
+    """
+    Rasterize a single manageable geometry chunk, extract its skeleton, and compute the width
+    at each skeleton pixel using a Euclidean Distance Transform (EDT).
     """
     minx, miny, maxx, maxy = geom.bounds
 
-    # Add a small padding to ensure the polygon boundary is fully enclosed
-    minx -= res_m * 2
-    miny -= res_m * 2
-    maxx += res_m * 2
-    maxy += res_m * 2
-
+    # Calculate raster dimensions based on bounding box and resolution
     width_px = int(np.ceil((maxx - minx) / res_m))
     height_px = int(np.ceil((maxy - miny) / res_m))
 
-    if width_px <= 0 or height_px <= 0:
+    # Handle edge case where geometry is smaller than a pixel
+    if width_px == 0 or height_px == 0:
         return 0.0, np.zeros(num_bins)
 
     transform = from_origin(minx, maxy, res_m, res_m)
 
+    # Rasterize the polygon geometry
     mask = rasterize(
         [(geom, 1)],
         out_shape=(height_px, width_px),
@@ -44,29 +89,49 @@ def process_linear_geometry(geom, res_m, bin_width_mm, num_bins):
     if not np.any(mask):
         return 0.0, np.zeros(num_bins)
 
-    # Distance transform: distance to the nearest zero (background) pixel
-    edt = distance_transform_edt(mask)
+    # Calculate distance transform (distances are in pixels)
+    # The true width is 2 * distance to the closest edge
+    dist_map = distance_transform_edt(mask)
+
+    # Skeletonize to find the centerline of the defect
     skeleton = skeletonize(mask)
 
-    # The EDT returns distance in pixels.
-    # Width (meters) = 2 * distance_px * res_m
-    # Width (mm) = Width (meters) * 1000
-    widths_mm = edt[skeleton] * res_m * 2.0 * 1000.0
+    if not np.any(skeleton):
+        return 0.0, np.zeros(num_bins)
 
-    # Bin indices
-    bin_indices = (widths_mm // bin_width_mm).astype(int)
-    bin_indices = np.clip(bin_indices, 0, num_bins - 1)
+    # Extract distances at skeleton pixels and convert to mm
+    # True width (mm) = 2 * dist_px * res_m * 1000
+    width_mm = 2.0 * dist_map[skeleton] * (res_m * 1000.0)
 
-    # For simplicity and efficiency, we approximate the length contributed
-    # by each skeleton pixel as the pixel resolution (res_m).
-    pixel_length_m = res_m
+    # Calculate length: each skeleton pixel represents approximately 'res_m' meters in length
+    # (A more precise graph-based length could be used, but pixel counting is faster and standard)
+    length_m = np.sum(skeleton) * res_m
 
-    hist = np.zeros(num_bins)
-    np.add.at(hist, bin_indices, pixel_length_m)
+    # Build the histogram
+    bins = np.arange(num_bins + 1) * bin_width_mm
+    hist, _ = np.histogram(width_mm, bins=bins)
 
-    total_length_m = len(widths_mm) * pixel_length_m
+    # Add values exceeding the max bin to the last bin
+    hist[-1] += np.sum(width_mm >= bins[-1])
 
-    return total_length_m, hist
+    return length_m, hist
+
+
+def process_linear_class(geom_multipolygon, res_m, bin_width_mm, num_bins, chunk_size_m):
+    """
+    Break down a complex linear geometry into smaller spatial chunks and accumulate linear statistics.
+    """
+    total_length = 0.0
+    total_hist = np.zeros(num_bins)
+
+    chunks = chunk_geometry_recursive(geom_multipolygon, chunk_size_m=chunk_size_m)
+
+    for chunk in chunks:
+        length_m, hist = process_geometry_chunk(chunk, res_m, bin_width_mm, num_bins)
+        total_length += length_m
+        total_hist += hist
+
+    return total_length, total_hist
 
 
 def compute_statistics(conf, out_dir, logger):
@@ -98,6 +163,8 @@ def compute_statistics(conf, out_dir, logger):
         if cls not in conf.class_type:
             continue
 
+        logger.info(f"    Processing class {cls} (Row index: {index})")
+
         is_linear = conf.class_type[cls]
         geom = row["geometry"]
 
@@ -114,7 +181,7 @@ def compute_statistics(conf, out_dir, logger):
 
         # Compute statistics based on class type
         if is_linear:
-            length_m, hist = process_linear_geometry(geom, res_m, conf.bin_width, conf.num_bins)
+            length_m, hist = process_linear_class(geom, res_m, conf.bin_width, conf.num_bins, conf.chunk_size_m)
             results[cls]["length_m"] += length_m
             for i in range(conf.num_bins):
                 results[cls]["histogram"][i] += hist[i]

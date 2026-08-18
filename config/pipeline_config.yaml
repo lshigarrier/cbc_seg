@@ -1,6 +1,6 @@
 save_dir: C:\Users\Admin\Data\ba105_results
 seed: 42
-inference_flag: true
+inference_flag: false
 postprocessing_flag: true
 # ================================================================================
 ## inference
@@ -109,3 +109,4 @@ class_type:
 raster_res: 0.75  # in mm
 bin_width: 2.5  # in mm
 num_bins: 11
+chunk_size_m: 5.  # in m
