@@ -2,6 +2,9 @@ save_dir: C:\Users\Admin\Data\ba105_results
 seed: 42
 inference_flag: false
 postprocessing_flag: true
+detections_flag: true
+cog_flag: true
+statistics_flag: true
 # ================================================================================
 ## inference
 ckpt_path: C:\Users\Admin\Code\cbc_seg\output\pidnet_l\version_1\checkpoints\epoch=973.ckpt
@@ -86,27 +89,38 @@ priority_list:
 # display detections
 class2show:
     fissure souple: [255, 0, 0]
-    vegetation: [255, 0, 0]
-    fissure souple reparee: [0, 0, 255]
-    depart de materiaux souple: [0, 255, 0]
+    fissure souple reparee: [0, 255, 0]
+    depart de materiaux souple: [0, 0, 255]
+    desenrobage: [255, 128, 0]
+    remontee de fines: [255, 0, 128]
+    ressuage: [128, 0, 0]
+    depot de gomme: [0, 128, 255]
+    fissure rigide: [255, 255, 0]
+    fissure rigide reparee: [255, 0, 255]
+    depart de materiaux rigide: [0, 255, 255]
+    faiencage: [128, 255, 0]
+    defaut de joint: [128, 0, 255]
+    vegetation: [0, 255, 128]
 # ================================================================================
 ## postprocessing
-# true for linear defects, false for surface defects
+# 0 for surface defects, 1 for linear defects without width computation, 2 for linear defects with width computation
 class_type:
-    fissure souple: true
-    fissure souple reparee: true
-    depart de materiaux souple: false
-    desenrobage: false
-    remontee de fines: false
-    ressuage: false
-    depot de gomme: false
-    fissure rigide: true
-    fissure rigide reparee: true
-    depart de materiaux rigide: false
-    faiencage: false
-    defaut de joint: true
-    vegetation: true
+    fissure souple: 2
+    fissure souple reparee: 1
+    depart de materiaux souple: 0
+    desenrobage: 0
+    remontee de fines: 0
+    ressuage: 0
+    depot de gomme: 0
+    fissure rigide: 2
+    fissure rigide reparee: 1
+    depart de materiaux rigide: 0
+    faiencage: 0
+    defaut de joint: 1
+    vegetation: 1
 raster_res: 0.75  # in mm
+raster_low_res: 10  # in mm
 bin_width: 2.5  # in mm
 num_bins: 11
-chunk_size_m: 5.  # in m
+chunk_size_m: 50.  # in m
+overlap_m: .5  # in m

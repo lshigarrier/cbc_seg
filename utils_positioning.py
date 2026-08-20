@@ -14,11 +14,20 @@ from shapely.ops import transform as shapely_transform
 from typing import Dict, List, Any
 
 
-def export_qgis_style(conf, qml_path, logger):
+def export_qgis_style(active_class2show, qml_path, logger):
+    """
+        Generates a QGIS style file (.qml) for the detected classes.
+        Only includes classes that are both requested for visualization and actually present in the data.
+
+        Args:
+            active_class2show (dict): Dictionary mapping present class names to their RGB color tuples.
+            qml_path (pathlib.Path): Path where the .qml file will be saved.
+            logger (logging.Logger): Logger instance for outputting information.
+        """
     categories_xml = []
     symbols_xml = []
 
-    for idx, (cls_name, color) in enumerate(conf.class2show.items()):
+    for idx, (cls_name, color) in enumerate(active_class2show.items()):
         color_str = f"{color[0]},{color[1]},{color[2]},255"
 
         # language=text
@@ -188,7 +197,13 @@ def process_detections(conf, all_passage_data, out_dir, logger):
     with geojson_path_vis.open('w', encoding='utf-8') as f:
         json.dump({"type": "FeatureCollection", "features": features_vis}, f)
 
-    export_qgis_style(conf, qml_path, logger)
+    active_class2show = {
+        cls_name: conf.class2show[cls_name]
+        for cls_name in class_polygons.keys()
+        if cls_name in conf.class2show
+    }
+
+    export_qgis_style(active_class2show, qml_path, logger)
     logger.info(f"  Saved visualization GeoJSON to {geojson_path_vis} and complete GeoJSON to {geojson_path_all}")
 
 

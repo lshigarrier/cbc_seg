@@ -111,12 +111,13 @@ def run_positioning(conf, logger):
 
     logger.info(f"Total number of images: {len(df_all_images)}")
     logger.info(f"Number of images assigned to an area: {len(df_routed)}")
-    logger.info('-' * 70)
 
     return routing_map, df_routed
 
 
 def run_inference(conf, logger, routing_map):
+    logger.info('-' * 70)
+
     conf.eval_data_dir = routing_map.keys()
     datamodule = ImageDataModule(conf, logger)
     model = get_model(
@@ -137,7 +138,8 @@ def run_inference(conf, logger, routing_map):
     trainer.predict(model, datamodule=datamodule)
 
 
-def run_postprocessing(conf, logger, df_routed):
+def run_postprocessing(conf, logger, df_routed,
+                       detections_flag=True, cog_flag=True, statistics_flag=True):
     logger.info('-' * 70)
     if df_routed.empty:
         logger.warning("All areas are empty. No postprocessing.")
@@ -155,14 +157,17 @@ def run_postprocessing(conf, logger, df_routed):
 
         # Generate detections (GeoJSON)
         conf.detection_dir = zone_out_dir / "detections"
-        process_detections(conf, zone_passage_data, zone_out_dir, logger)
+        if detections_flag:
+            process_detections(conf, zone_passage_data, zone_out_dir, logger)
 
         # Generate Mosaic (COG)
-        generate_global_cog(conf, zone_passage_data, zone_out_dir, logger)
+        if cog_flag:
+            generate_global_cog(conf, zone_passage_data, zone_out_dir, logger)
 
         # Generate Statistics and Histograms
-        compute_statistics(conf, zone_out_dir, logger)
-        generate_histograms(zone_out_dir, logger)
+        if statistics_flag:
+            compute_statistics(conf, zone_out_dir, logger)
+            generate_histograms(zone_out_dir, logger)
 
         logger.info('-' * 70)
 
@@ -190,8 +195,9 @@ def main():
         run_inference(conf, logger, routing_map)
 
     # Build COG and postprocess detections
-    if conf.postprocessing_flag:
-        run_postprocessing(conf, logger, df_routed)
+    if conf.postprocessing_flag and (conf.detections_flag or conf.cog_flag or conf.statistics_flag):
+        run_postprocessing(conf, logger, df_routed,
+                           conf.detections_flag, conf.cog_flag, conf.statistics_flag)
 
     timer.stop(logger, len_dataset=len(df_routed))
 

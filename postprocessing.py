@@ -13,10 +13,19 @@ from shapely.geometry import box
 from utils import logging_conf, get_conf, CustomTimer
 
 
-def chunk_geometry_recursive(geom, chunk_size_m=5.0):
+def chunk_geometry_recursive(geom, chunk_size_m, overlap_m):
     """
-    Recursively split a large geometry into smaller chunks to avoid CPU bottlenecks.
-    Uses a QuadTree approach based on bounding boxes.
+    Recursively splits a large geometry into smaller chunks to avoid CPU bottlenecks.
+    Uses a binary split approach (KD-Tree style): it only splits the longest dimension
+    to avoid creating extremely narrow geometries.
+
+    Args:
+        geom: The geometry to chunk.
+        chunk_size_m (float): Maximum allowed size in meters for a chunk's dimension.
+        overlap_m (float): Physical overlap in meters added to each chunk to preserve EDT context.
+
+    Returns:
+        list: A list of tuples (chunk_geometry, strict_bounding_box).
     """
     if geom.is_empty:
         return []
@@ -27,45 +36,73 @@ def chunk_geometry_recursive(geom, chunk_size_m=5.0):
 
     # Base case: bounding box is smaller than or equal to the chunk size
     if width <= chunk_size_m and height <= chunk_size_m:
+        strict_box = box(*geom.bounds)
         if geom.geom_type in ['Polygon', 'MultiPolygon']:
-            return geom.geoms if geom.geom_type == 'MultiPolygon' else [geom]
+            return [(g, strict_box) for g in (geom.geoms if geom.geom_type == 'MultiPolygon' else [geom])]
         elif geom.geom_type == 'GeometryCollection':
             parts = []
             for part in geom.geoms:
                 if part.geom_type in ['Polygon', 'MultiPolygon']:
-                    parts.extend(part.geoms if part.geom_type == 'MultiPolygon' else [part])
+                    parts.extend(
+                        [(g, strict_box) for g in (part.geoms if part.geom_type == 'MultiPolygon' else [part])])
             return parts
         return []
 
     chunks = []
-    midx = minx + width / 2.0
-    midy = miny + height / 2.0
 
-    # Define the 4 quadrants
-    quadrants = [
-        box(minx, miny, midx, midy),
-        box(midx, miny, maxx, midy),
-        box(minx, midy, midx, maxy),
-        box(midx, midy, maxx, maxy)
-    ]
+    # Decide which axis to split: always split the longest dimension
+    if width >= height:
+        midx = minx + width / 2.0
 
-    for quad in quadrants:
-        # Fast bounding box check before exact intersection
-        if geom.intersects(quad):
-            intersection = geom.intersection(quad)
+        strict_halves = [
+            box(minx, miny, midx, maxy),
+            box(midx, miny, maxx, maxy)
+        ]
+        extended_halves = [
+            box(minx, miny, midx + overlap_m, maxy),
+            box(midx - overlap_m, miny, maxx, maxy)
+        ]
+    else:
+        midy = miny + height / 2.0
+
+        strict_halves = [
+            box(minx, miny, maxx, midy),
+            box(minx, midy, maxx, maxy)
+        ]
+        extended_halves = [
+            box(minx, miny, maxx, midy + overlap_m),
+            box(minx, midy - overlap_m, maxx, maxy)
+        ]
+
+    for strict_half, ext_half in zip(strict_halves, extended_halves):
+        # Check intersection with the extended bounding box to preserve context
+        if geom.intersects(ext_half):
+            intersection = geom.intersection(ext_half)
             if not intersection.is_empty:
                 # Recursively chunk the intersection
-                chunks.extend(chunk_geometry_recursive(intersection, chunk_size_m))
+                sub_chunks = chunk_geometry_recursive(intersection, chunk_size_m, overlap_m)
+
+                # Propagate the strict mask rules back up the recursion tree
+                for sub_geom, sub_strict in sub_chunks:
+                    actual_strict = sub_strict.intersection(strict_half)
+                    if not actual_strict.is_empty:
+                        chunks.append((sub_geom, actual_strict))
 
     return chunks
 
 
-def process_geometry_chunk(geom, res_m, bin_width_mm, num_bins):
+def process_geometry_chunk(geom, strict_box, res_m, compute_widths, bin_width_mm, num_bins):
     """
-    Rasterize a single manageable geometry chunk, extract its skeleton, and compute the width
-    at each skeleton pixel using a Euclidean Distance Transform (EDT).
+    Rasterize a single manageable geometry chunk and extract its skeleton to compute length.
+    If compute_widths is True, also computes the width at each skeleton pixel using a Euclidean Distance Transform (EDT).
     """
     minx, miny, maxx, maxy = geom.bounds
+
+    # Add a small padding to ensure the polygon boundary is fully enclosed
+    minx -= res_m * 2.0
+    miny -= res_m * 2.0
+    maxx += res_m * 2.0
+    maxy += res_m * 2.0
 
     # Calculate raster dimensions based on bounding box and resolution
     width_px = int(np.ceil((maxx - minx) / res_m))
@@ -73,7 +110,7 @@ def process_geometry_chunk(geom, res_m, bin_width_mm, num_bins):
 
     # Handle edge case where geometry is smaller than a pixel
     if width_px == 0 or height_px == 0:
-        return 0.0, np.zeros(num_bins)
+        return 0.0, (np.zeros(num_bins) if compute_widths else None)
 
     transform = from_origin(minx, maxy, res_m, res_m)
 
@@ -87,57 +124,76 @@ def process_geometry_chunk(geom, res_m, bin_width_mm, num_bins):
     )
 
     if not np.any(mask):
-        return 0.0, np.zeros(num_bins)
-
-    # Calculate distance transform (distances are in pixels)
-    # The true width is 2 * distance to the closest edge
-    dist_map = distance_transform_edt(mask)
+        return 0.0, (np.zeros(num_bins) if compute_widths else None)
 
     # Skeletonize to find the centerline of the defect
     skeleton = skeletonize(mask)
 
-    if not np.any(skeleton):
-        return 0.0, np.zeros(num_bins)
+    # Create and apply the strict spatial mask
+    s_minx, s_miny, s_maxx, s_maxy = strict_box.bounds
+    # Convert strict box geographic coordinates to pixel indices
+    col_start = max(0, int((s_minx - minx) / res_m))
+    col_end = min(width_px, int(np.ceil((s_maxx - minx) / res_m)))
+    row_start = max(0, int((maxy - s_maxy) / res_m))
+    row_end = min(height_px, int(np.ceil((maxy - s_miny) / res_m)))
 
-    # Extract distances at skeleton pixels and convert to mm
-    # True width (mm) = 2 * dist_px * res_m * 1000
-    width_mm = 2.0 * dist_map[skeleton] * (res_m * 1000.0)
+    strict_mask = np.zeros_like(skeleton, dtype=bool)
+    strict_mask[row_start:row_end, col_start:col_end] = True
+
+    # Keep only skeleton pixels that are strictly inside the exact quadrant
+    skeleton = skeleton & strict_mask
+
+    if not np.any(skeleton):
+        return 0.0, (np.zeros(num_bins) if compute_widths else None)
 
     # Calculate length: each skeleton pixel represents approximately 'res_m' meters in length
     # (A more precise graph-based length could be used, but pixel counting is faster and standard)
     length_m = np.sum(skeleton) * res_m
 
-    # Build the histogram
-    bins = np.arange(num_bins + 1) * bin_width_mm
-    hist, _ = np.histogram(width_mm, bins=bins)
+    if not compute_widths:
+        return length_m, None
 
-    # Add values exceeding the max bin to the last bin
-    hist[-1] += np.sum(width_mm >= bins[-1])
+    # Calculate distance transform (distances are in pixels)
+    # The true width is 2 * distance to the closest edge
+    dist_map = distance_transform_edt(mask)
+
+    # Extract distances at skeleton pixels
+    # True width (mm) = 2 * dist_px * res_m
+    widths_mm = 2.0 * dist_map[skeleton] * (res_m * 1000.0)
+
+    # Build the histogram
+    bin_indices = (widths_mm // bin_width_mm).astype(int)
+    bin_indices = np.clip(bin_indices, 0, num_bins - 1)
+    hist = np.zeros(num_bins)
+    np.add.at(hist, bin_indices, res_m)
 
     return length_m, hist
 
 
-def process_linear_class(geom_multipolygon, res_m, bin_width_mm, num_bins, chunk_size_m):
+def process_linear_class(geom_multipolygon, res_m, chunk_size_m, overlap_m, compute_widths, bin_width_mm=None, num_bins=None):
     """
     Break down a complex linear geometry into smaller spatial chunks and accumulate linear statistics.
     """
     total_length = 0.0
-    total_hist = np.zeros(num_bins)
+    total_hist = np.zeros(num_bins) if compute_widths else None
 
-    chunks = chunk_geometry_recursive(geom_multipolygon, chunk_size_m=chunk_size_m)
+    chunks = chunk_geometry_recursive(geom_multipolygon, chunk_size_m=chunk_size_m, overlap_m=overlap_m)
 
-    for chunk in chunks:
-        length_m, hist = process_geometry_chunk(chunk, res_m, bin_width_mm, num_bins)
+    for chunk_geom, strict_box in chunks:
+        length_m, hist = process_geometry_chunk(chunk_geom, strict_box, res_m, compute_widths, bin_width_mm, num_bins)
         total_length += length_m
-        total_hist += hist
+        if compute_widths:
+            total_hist += hist
 
     return total_length, total_hist
 
 
 def compute_statistics(conf, out_dir, logger):
     """
-    Reads merged detections, computes area for surface defects,
-    and skeletonizes linear defects to output a width histogram.
+    Reads merged detections, and computes statistics based on class_type definition.
+    0: Area for surface defects.
+    1: Length only for large linear defects (low res skeletonization).
+    2: Length and width histograms for linear defects (high res skeletonization + EDT).
     """
     input_file = out_dir / "detections.geojson"
     output_file = out_dir / "statistics.json"
@@ -152,8 +208,8 @@ def compute_statistics(conf, out_dir, logger):
     # Reprojecting geometries to conf.crs_projected
     gdf = gdf.to_crs(conf.crs_projected)
 
-    # Resolution in meters corresponds to the bin width
-    res_m = conf.raster_res / 1000.0
+    res_high_m = conf.raster_res / 1000.0
+    res_low_m = conf.raster_low_res / 1000.0
 
     results = {}
 
@@ -163,30 +219,42 @@ def compute_statistics(conf, out_dir, logger):
         if cls not in conf.class_type:
             continue
 
-        logger.info(f"    Processing class {cls} (Row index: {index})")
+        # logger.info(f"    Processing class {cls} (Row index: {index})")
 
-        is_linear = conf.class_type[cls]
+        ctype = conf.class_type[cls]
         geom = row["geometry"]
 
         # Initialize the data structure for a new class
         if cls not in results:
-            if is_linear:
+            if ctype == 0:
+                results[cls] = {"area_m2": 0.0}
+            elif ctype == 1:
+                results[cls] = {"length_m": 0.0}
+            elif ctype == 2:
                 results[cls] = {
                     "length_m": 0.0,
                     "bin_width_mm": conf.bin_width,
                     "histogram": {i: 0.0 for i in range(conf.num_bins)}
                 }
-            else:
-                results[cls] = {"area_m2": 0.0}
 
         # Compute statistics based on class type
-        if is_linear:
-            length_m, hist = process_linear_class(geom, res_m, conf.bin_width, conf.num_bins, conf.chunk_size_m)
+        if ctype == 0:
+            results[cls]["area_m2"] += geom.area
+
+        elif ctype == 1:
+            length_m, _ = process_linear_class(
+                geom, res_low_m, conf.chunk_size_m, conf.overlap_m, compute_widths=False
+            )
+            results[cls]["length_m"] += length_m
+
+        elif ctype == 2:
+            length_m, hist = process_linear_class(
+                geom, res_high_m, conf.chunk_size_m, conf.overlap_m, compute_widths=True,
+                bin_width_mm=conf.bin_width, num_bins=conf.num_bins
+            )
             results[cls]["length_m"] += length_m
             for i in range(conf.num_bins):
-                results[cls]["histogram"][i] += hist[i]
-        else:
-            results[cls]["area_m2"] += geom.area
+                results[cls]["histogram"][i] += float(hist[i])
 
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=4)
