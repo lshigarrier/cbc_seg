@@ -118,9 +118,13 @@ class_type:
     faiencage: 0
     defaut de joint: 1
     vegetation: 1
+# raster resolution for type 2 classes
 raster_res: 0.75  # in mm
+# raster resolution for type 1 classes
 raster_low_res: 10  # in mm
+# histograms parameters
 bin_width: 2.5  # in mm
 num_bins: 11
+# chunking parameters
 chunk_size_m: 50.  # in m
 overlap_m: .5  # in m

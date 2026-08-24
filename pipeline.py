@@ -145,24 +145,24 @@ def run_postprocessing(conf, logger, df_routed,
         logger.warning("All areas are empty. No postprocessing.")
         return
 
-    for zone_name, df_zone in df_routed.groupby('Area'):
-        logger.info(f"Generating outputs for area: {zone_name}")
+    for area_name, df_zone in df_routed.groupby('Area'):
+        logger.info(f"Generating outputs for area: {area_name}")
 
-        zone_out_dir = conf.save_dir / zone_name
+        zone_out_dir = conf.save_dir / area_name
 
         # Reconstruct the expected 'all_passage_data' but only with the images belonging to this zone.
         zone_passage_data = []
         for passage_dir, df_passage_part in df_zone.groupby('Directory'):
             zone_passage_data.append((df_passage_part, passage_dir))
 
-        # Generate detections (GeoJSON)
+        # Process detections (GeoJSON)
         conf.detection_dir = zone_out_dir / "detections"
         if detections_flag:
-            process_detections(conf, zone_passage_data, zone_out_dir, logger)
+            process_detections(conf, zone_passage_data, zone_out_dir, logger, area_name=area_name)
 
         # Generate Mosaic (COG)
         if cog_flag:
-            generate_global_cog(conf, zone_passage_data, zone_out_dir, logger)
+            generate_global_cog(conf, zone_passage_data, zone_out_dir, logger, area_name=area_name)
 
         # Generate Statistics and Histograms
         if statistics_flag:

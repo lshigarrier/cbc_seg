@@ -66,14 +66,18 @@ def export_qgis_style(active_class2show, qml_path, logger):
     logger.info(f"  Generated QGIS style file with priority ordering at {qml_path}")
 
 
-def process_detections(conf, all_passage_data, out_dir, logger):
+def process_detections(conf, all_passage_data, out_dir, logger, area_name=None):
     logger.info("  Starting detection processing, projection, and export")
 
     detection_dir = Path(conf.detection_dir)
 
     geojson_path_all = out_dir / "detections.geojson"
-    geojson_path_vis = out_dir / "visible_detections.geojson"
-    qml_path = out_dir / "visible_detections.qml"
+    if area_name:
+        geojson_path_vis = out_dir / f"{area_name}_detections.geojson"
+        qml_path = out_dir / f"{area_name}_detections.qml"
+    else:
+        geojson_path_vis = out_dir / "visible_detections.geojson"
+        qml_path = out_dir / "visible_detections.qml"
 
     image_lookup: Dict[str, Dict[str, float]] = {}
     for df_coords, passage_dir in all_passage_data:
@@ -223,7 +227,7 @@ def to_win_coords(u, v, args):
     return [c, r]
 
 
-def generate_global_cog(conf, all_passage_data, out_dir, logger):
+def generate_global_cog(conf, all_passage_data, out_dir, logger, area_name=None):
     """
     Creates a single global mosaic directly on disk by iterating over spatial windows,
     blending overlapping images, and computing global statistics to avoid aux.xml generation.
@@ -305,7 +309,10 @@ def generate_global_cog(conf, all_passage_data, out_dir, logger):
     }
 
     logger.info(f"  Allocating global GeoTIFF ({width_px}x{height_px} pixels)")
-    out_cog_path = out_dir / "mosaic.tif"
+    if area_name:
+        out_cog_path = out_dir / f"{area_name}_mosaic.tif"
+    else:
+        out_cog_path = out_dir / "mosaic.tif"
     with rasterio.open(out_cog_path, 'w', **profile) as _:
         pass  # Create empty structure
 

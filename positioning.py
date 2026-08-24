@@ -133,10 +133,14 @@ def process_passage(conf, passage_dir, logger):
         read_gps = read_xlsx_gps
         data_path = passage_dir / "Image.xlsx"
     else:
-        raise NotImplementedError(f"  No GPS file found in {passage_dir}")
+        logger.error(f"  No GPS file found in {passage_dir}")
+        return None
 
     # Loading GPS data
     df = read_gps(data_path)
+    if len(df) <= 1:
+        logger.error(f"  There should be at least 2 images in {passage_dir}, found only {len(df)}")
+        return None
 
     # Projection in cartesian coordinates
     df = project_coordinates(conf, df)
