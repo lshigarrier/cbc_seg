@@ -29,6 +29,12 @@ def read_xlsx_gps(file_path):
     return df[required_columns]
 
 
+def read_csv_gps(file_path):
+    df = pd.read_csv(file_path)
+    required_columns = ['Image', 'Latitude', 'Longitude', 'Cap']
+    return df[required_columns]
+
+
 def project_coordinates(conf, df):
     """
     Project GPS coordinates (Latitude/Longitude) to local coordinates (X/Y).
@@ -132,6 +138,9 @@ def process_passage(conf, passage_dir, logger):
     elif (passage_dir / "Image.xlsx").exists():
         read_gps = read_xlsx_gps
         data_path = passage_dir / "Image.xlsx"
+    elif (passage_dir / "Image.csv").exists():
+        read_gps = read_csv_gps
+        data_path = passage_dir / "Image.csv"
     else:
         logger.error(f"  No GPS file found in {passage_dir}")
         return None
@@ -161,9 +170,12 @@ def process_passage(conf, passage_dir, logger):
     else:
         df['X_corr'], df['Y_corr'] = df['X_proj'].copy(), df['Y_proj'].copy()
         log_image_step(df['X_corr'].values, df['Y_corr'].values, logger)
-        dx = df['X_corr'].shift(-1) - df['X_corr']
-        dy = df['Y_corr'].shift(-1) - df['Y_corr']
-        df['HDT_corr'] = compute_heading(dx, dy)
+        if conf.compute_hdt:
+            dx = df['X_corr'].shift(-1) - df['X_corr']
+            dy = df['Y_corr'].shift(-1) - df['Y_corr']
+            df['HDT_corr'] = compute_heading(dx, dy)
+        else:
+            df['HDT_corr'] = np.pi / 2 - df['Cap'].copy() * np.pi / 180
 
     return df
 

@@ -44,11 +44,12 @@ min_polygon_area: 250.0
 edge_margin: 5
 # ================================================================================
 ## positioning
-input_dir: C:\Users\Admin\Data\tests_dmi\2026_07_30
-output_dir: C:\Users\Admin\Data\tests_dmi\2026_07_30\143041_range
+input_dir: C:\Users\Admin\Data\tests_dmi\2026_09_01\route_parking
+output_dir: C:\Users\Admin\Data\tests_dmi\2026_09_01\route_parking_output
 generate_cog: true
 read_csv: false
-apply_correction: true
+apply_correction: false
+compute_hdt: false
 # projection
 crs_gps: EPSG:4326
 crs_projected: EPSG:3944

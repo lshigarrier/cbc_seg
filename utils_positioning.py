@@ -211,6 +211,143 @@ def process_detections(conf, all_passage_data, out_dir, logger, area_name=None):
     logger.info(f"  Saved visualization GeoJSON to {geojson_path_vis} and complete GeoJSON to {geojson_path_all}")
 
 
+def process_detections_no_merge(conf, all_passage_data, out_dir, logger, area_name=None):
+    logger.info("  Starting detection processing, projection, and export")
+
+    detection_dir = Path(conf.detection_dir)
+
+    # Setup output paths
+    geojson_path_all = out_dir / "detections.geojson"
+    if area_name:
+        geojson_path_vis = out_dir / f"{area_name}_detections.geojson"
+        qml_path = out_dir / f"{area_name}_detections.qml"
+    else:
+        geojson_path_vis = out_dir / "visible_detections.geojson"
+        qml_path = out_dir / "visible_detections.qml"
+
+    # Build image lookup dictionary
+    image_lookup: Dict[str, Dict[str, float]] = {}
+    for df_coords, passage_dir in all_passage_data:
+        folder_name = passage_dir.name
+        for _, row in df_coords.iterrows():
+            image_name = Path(row['Image']).stem
+            key = f"{folder_name}_{image_name}"
+            image_lookup[key] = {
+                'X_corr': row['X_corr'],
+                'Y_corr': row['Y_corr'],
+                'HDT_corr': row['HDT_corr']
+            }
+
+    # Initialize the transformer from projected CRS to WGS84
+    transformer = pyproj.Transformer.from_crs(conf.crs_projected, "EPSG:4326", always_xy=True)
+
+    features_all: List[Dict[str, Any]] = []
+    features_vis: List[Dict[str, Any]] = []
+    found_classes = set()
+
+    for json_path in detection_dir.glob("*.json"):
+        with json_path.open('r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        image_stem = json_path.stem
+        image_path_str = data.get("imagePath", image_stem)
+        parts = image_path_str.split('_')
+        if len(parts) < 2:
+            continue
+
+        folder_name = "_".join(parts[:-1])
+        image_name = parts[-1].split('.')[0]
+        key = f"{folder_name}_{image_name}"
+
+        lookup_data = image_lookup.get(key)
+        if lookup_data is None:
+            logger.warning(f"  Cannot find image metadata for ({folder_name}, {image_name})")
+            continue
+
+        x_corr = lookup_data['X_corr']
+        y_corr = lookup_data['Y_corr']
+        hdt_corr = lookup_data['HDT_corr']
+
+        h = data["imageHeight"]
+        w = data["imageWidth"]
+        pixel_to_meter = conf.span_width / w
+
+        # Apply the -pi/2 display rotation once per image
+        effective_hdt = hdt_corr - (np.pi / 2.0)
+        cos_hdt = np.cos(effective_hdt)
+        sin_hdt = np.sin(effective_hdt)
+
+        for shape_dict in data.get("shapes", []):
+            label = shape_dict.get("label")
+            if not label:
+                continue
+
+            pts = np.array(shape_dict["points"], dtype=np.float64)
+            if len(pts) < 3:
+                continue
+
+            # Vectorized calculation of global coordinates
+            # Origin is top-left, rotation is applied at the center.
+            # Y is inverted to match the mosaic's upward-pointing local Y axis.
+            dx_pix = pts[:, 0] - w / 2.0
+            dy_pix = h / 2.0 - pts[:, 1]
+
+            dx_m = dx_pix * pixel_to_meter
+            dy_m = dy_pix * pixel_to_meter
+
+            # Rotate by effective vehicle heading and translate to global position
+            x_global = x_corr + (dx_m * cos_hdt - dy_m * sin_hdt)
+            y_global = y_corr + (dx_m * sin_hdt + dy_m * cos_hdt)
+
+            proj_pts = np.column_stack((x_global, y_global))
+
+            # Create polygon and fix self-intersections
+            poly = Polygon(proj_pts).buffer(0)
+
+            # Transform geometry to WGS84
+            poly_wgs84 = shapely_transform(transformer.transform, poly)
+
+            # Crash intentionally if class is missing from priority_list per specification
+            priority_val = conf.priority_list.index(label)
+
+            feat = {
+                "type": "Feature",
+                "properties": {
+                    "class": label,
+                    "priority": priority_val,
+                    "image": image_stem
+                },
+                "geometry": mapping(poly_wgs84)
+            }
+
+            features_all.append(feat)
+            found_classes.add(label)
+
+            if label in conf.class2show:
+                features_vis.append(feat)
+
+    logger.info("  Writing GeoJSON files")
+
+    # Save the complete dataset for statistics
+    with geojson_path_all.open('w', encoding='utf-8') as f:
+        json.dump({"type": "FeatureCollection", "features": features_all}, f)
+
+    # Save the filtered dataset for visualization
+    with geojson_path_vis.open('w', encoding='utf-8') as f:
+        json.dump({"type": "FeatureCollection", "features": features_vis}, f)
+
+    # Dynamically build the active classes for the QGIS style
+    active_class2show = {
+        cls_name: conf.class2show[cls_name]
+        for cls_name in found_classes
+        if cls_name in conf.class2show
+    }
+
+    export_qgis_style(active_class2show, qml_path, logger)
+
+    logger.info(f"  Saved visualization GeoJSON to {geojson_path_vis} and complete GeoJSON to {geojson_path_all}")
+
+
 def to_win_coords(u, v, args):
     w_low, h_low, pixel_to_meter, x_c, y_c, hdt, min_gx, max_gy, col_off, row_off = args
 

@@ -11,7 +11,7 @@ from utils import get_one_conf, logging_conf, pytorch_perf, CustomTimer
 from data.data import ImageDataModule
 from models.models import get_model
 from positioning import process_passage
-from utils_positioning import process_detections, generate_global_cog
+from utils_positioning import process_detections, process_detections_no_merge, generate_global_cog
 from postprocessing import compute_statistics, generate_histograms
 
 
@@ -158,7 +158,10 @@ def run_postprocessing(conf, logger, df_routed,
         # Process detections (GeoJSON)
         conf.detection_dir = zone_out_dir / "detections"
         if detections_flag:
-            process_detections(conf, zone_passage_data, zone_out_dir, logger, area_name=area_name)
+            if conf.merge_polygons:
+                process_detections(conf, zone_passage_data, zone_out_dir, logger, area_name=area_name)
+            else:
+                process_detections_no_merge(conf, zone_passage_data, zone_out_dir, logger, area_name=area_name)
 
         # Generate Mosaic (COG)
         if cog_flag:

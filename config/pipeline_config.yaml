@@ -1,10 +1,10 @@
-save_dir: C:\Users\Admin\Data\ba105_results
+save_dir: C:\Users\Admin\Data\tests_dmi\2026_09_01\couverture_results
 seed: 42
 inference_flag: false
 postprocessing_flag: true
 detections_flag: true
 cog_flag: true
-statistics_flag: true
+statistics_flag: false
 # ================================================================================
 ## inference
 ckpt_path: C:\Users\Admin\Code\cbc_seg\output\pidnet_l\version_1\checkpoints\epoch=973.ckpt
@@ -51,18 +51,20 @@ min_polygon_area: 250.0
 edge_margin: 5
 # ================================================================================
 ## positioning
-apply_correction: true
+apply_correction: false
+compute_hdt: false
+merge_polygons: false
 # projection
 crs_gps: EPSG:4326
 crs_projected: EPSG:3944
 # camera offset
 cam_offset_x: 0.0  # lateral, in meters
-cam_offset_y: 3.88 # 3.7  # longitudinal, in meters
+cam_offset_y: 3.88 # 2.4 # 3.7  # longitudinal, in meters
 # smoothing
 method: range
 gps_error_variance: 0.5
 # image dimension
-downscale_factor: 0.05
+downscale_factor: 0.25
 span_width: 2.95  # in meters
 # COG
 merge_window_size: 2048
@@ -87,20 +89,39 @@ priority_list:
     - vegetation
     - autre
 # display detections
+# class2show:
+    # fissure souple: [255, 0, 0]
+    # fissure souple reparee: [0, 255, 0]
+    # depart de materiaux souple: [0, 0, 255]
+    # desenrobage: [255, 128, 0]
+    # remontee de fines: [255, 0, 128]
+    # ressuage: [128, 0, 0]
+    # depot de gomme: [0, 128, 255]
+    # fissure rigide: [255, 255, 0]
+    # fissure rigide reparee: [255, 0, 255]
+    # depart de materiaux rigide: [0, 255, 255]
+    # faiencage: [128, 255, 0]
+    # defaut de joint: [128, 0, 255]
+    # vegetation: [0, 255, 128]
 class2show:
     fissure souple: [255, 0, 0]
     fissure souple reparee: [0, 255, 0]
     depart de materiaux souple: [0, 0, 255]
-    desenrobage: [255, 128, 0]
-    remontee de fines: [255, 0, 128]
-    ressuage: [128, 0, 0]
-    depot de gomme: [0, 128, 255]
-    fissure rigide: [255, 255, 0]
-    fissure rigide reparee: [255, 0, 255]
-    depart de materiaux rigide: [0, 255, 255]
-    faiencage: [128, 255, 0]
-    defaut de joint: [128, 0, 255]
-    vegetation: [0, 255, 128]
+    desenrobage: [255, 255, 0]
+    remontee de fines: [255, 0, 255]
+    ressuage: [0, 255, 255]
+    depot de gomme: [255, 128, 0]
+    fissure rigide: [255, 0, 128]
+    fissure rigide reparee: [0, 255, 128]
+    depart de materiaux rigide: [128, 255, 0]
+    faiencage: [128, 0, 255]
+    defaut de joint: [0, 128, 255]
+    joint: [128, 0, 0]
+    vegetation: [0, 128, 0]
+    marquage: [0, 0, 128]
+    jonction: [128, 128, 0]
+    objet: [128, 0, 128]
+    autre: [0, 128, 128]
 # ================================================================================
 ## postprocessing
 # 0 for surface defects, 1 for linear defects without width computation, 2 for linear defects with width computation
