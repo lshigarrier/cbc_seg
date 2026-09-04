@@ -3,7 +3,7 @@
 *.pt
 
 # Python
-__pycache__/
+*__pycache__/
 *.egg-info/
 
 # IDE
@@ -12,6 +12,8 @@ __pycache__/
 # Outputs
 output/
 lightning_logs/
+*test_output/
+*example_output/
 
 # Archives
 archives/
