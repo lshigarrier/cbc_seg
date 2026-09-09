@@ -2,37 +2,32 @@
 Test script for CBCPIDNetL Inference Module.
 
 This script loads a set of images from a directory and runs inference
-using 3 different input formats (path, numpy single, numpy batch).
-It overlays the predicted segmentation masks
+using 5 different input formats (path, numpy single, tensor single,
+numpy batch, tensor batch). It overlays the predicted segmentation masks
 onto the original images and saves the results in designated subdirectories.
 
 Inputs:
     - input_dir: Path to the directory containing input images.
     - output_dir: Path to the directory where results will be saved.
-    - model_path: Path to the pre-trained ONNX model.
+    - model_path: Path to the pre-trained TorchScript model.
 
 Outputs:
-    - Generates 3 subdirectories inside output_dir containing the blended
+    - Generates 5 subdirectories inside output_dir containing the blended
       images (original image + semi-transparent mask overlay).
 
 Example command:
     python test_cbc_pidnet_large.py
 """
 
-import os
-import time
-import cv2
-import numpy as np
 from pathlib import Path
 from typing import List
 
-try:
-    import torch
-    os.add_dll_directory(os.path.join(os.path.dirname(torch.__file__), 'lib'))
-except ImportError:
-    torch = None
+import time
+import cv2
+import numpy as np
+import torch
 
-from cbc_pidnet_large import CBCPIDNetL
+from cbc_pidnet_large_torchscript import CBCPIDNetL
 
 
 class CustomTimer:
@@ -94,9 +89,9 @@ def overlay_mask(image: np.ndarray, mask: np.ndarray, alpha: float = 0.5) -> np.
     return final_out
 
 
-def save_result(output_path: Path, image: np.ndarray, mask: np.ndarray):
+def save_result(output_path: Path, image: np.ndarray, mask: torch.Tensor):
     """Blends the mask with the image and saves it to the disk."""
-    mask_np = mask.astype(np.uint8)
+    mask_np = mask.cpu().numpy().astype(np.uint8)
     blended = overlay_mask(image, mask_np)
 
     # Convert RGB back to BGR for OpenCV saving
@@ -110,7 +105,7 @@ def load_image_rgb(path: Path) -> np.ndarray:
     return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
 
-def test_path_single(model, image_paths: List[Path], output_dir: Path):
+def test_path_single(model: torch.nn.Module, image_paths: List[Path], output_dir: Path):
     """Variant 1: Inference using file paths one by one."""
     out_sub_dir = output_dir / "1_path_single"
     out_sub_dir.mkdir(parents=True, exist_ok=True)
@@ -121,7 +116,7 @@ def test_path_single(model, image_paths: List[Path], output_dir: Path):
         save_result(out_sub_dir / path.name, orig_img, mask)
 
 
-def test_numpy_single(model, image_paths: List[Path], output_dir: Path):
+def test_numpy_single(model: torch.nn.Module, image_paths: List[Path], output_dir: Path):
     """Variant 2: Inference using numpy arrays one by one (batch_size=1)."""
     out_sub_dir = output_dir / "2_numpy_single"
     out_sub_dir.mkdir(parents=True, exist_ok=True)
@@ -133,9 +128,22 @@ def test_numpy_single(model, image_paths: List[Path], output_dir: Path):
         save_result(out_sub_dir / path.name, img_np, mask)
 
 
-def test_numpy_batch(model, image_paths: List[Path], output_dir: Path, batch_size: int = 2):
-    """Variant 3: Inference using numpy arrays in batches (batch_size=2)."""
-    out_sub_dir = output_dir / "3_numpy_batch"
+def test_tensor_single(model: torch.nn.Module, image_paths: List[Path], output_dir: Path):
+    """Variant 3: Inference using torch tensors one by one (batch_size=1)."""
+    out_sub_dir = output_dir / "3_tensor_single"
+    out_sub_dir.mkdir(parents=True, exist_ok=True)
+
+    for path in image_paths:
+        img_np = load_image_rgb(path)
+        img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)  # (3, H, W)
+
+        mask = model(img_tensor, return_logits=False)
+        save_result(out_sub_dir / path.name, img_np, mask)
+
+
+def test_numpy_batch(model: torch.nn.Module, image_paths: List[Path], output_dir: Path, batch_size: int = 2):
+    """Variant 4: Inference using numpy arrays in batches (batch_size=2)."""
+    out_sub_dir = output_dir / "4_numpy_batch"
     out_sub_dir.mkdir(parents=True, exist_ok=True)
 
     for i in range(0, len(image_paths), batch_size):
@@ -152,8 +160,27 @@ def test_numpy_batch(model, image_paths: List[Path], output_dir: Path, batch_siz
             save_result(out_sub_dir / path.name, orig_images[j], masks[j])
 
 
+def test_tensor_batch(model: torch.nn.Module, image_paths: List[Path], output_dir: Path, batch_size: int = 2):
+    """Variant 5: Inference using torch tensors in batches (batch_size=2)."""
+    out_sub_dir = output_dir / "5_tensor_batch"
+    out_sub_dir.mkdir(parents=True, exist_ok=True)
+
+    for i in range(0, len(image_paths), batch_size):
+        batch_paths = image_paths[i:i + batch_size]
+
+        orig_images = [load_image_rgb(p) for p in batch_paths]
+        # Create tensor (B, 3, H, W)
+        tensors = [torch.from_numpy(img).permute(2, 0, 1) for img in orig_images]
+        batch_tensor = torch.stack(tensors, dim=0)
+
+        masks = model(batch_tensor, return_logits=False)
+
+        for j, path in enumerate(batch_paths):
+            save_result(out_sub_dir / path.name, orig_images[j], masks[j])
+
+
 def main():
-    model_path = Path("C:/Users/Admin/Code/cbc_seg/cbc-pidnet-large/model/cbc-pidnet-large.onnx")
+    model_path = Path("C:/Users/Admin/Code/cbc_seg/cbc-pidnet-large/model/cbc-pidnet-large.pt")
     input_dir = Path("C:/Users/Admin/Data/test_images")
     output_dir = Path("C:/Users/Admin/Code/cbc_seg/cbc-pidnet-large/test_output")
 
@@ -173,12 +200,8 @@ def main():
         patch_per_row=7,
         patch_per_col=3,
         patch_overlap=0.5,
-        device='cuda'
+        device='cuda' if torch.cuda.is_available() else 'cpu'
     )
-    print("Active providers:", model.session.get_providers())
-
-    # Warm-up with the first image to force the VRAM allocation and the graph compilation
-    _ = model(image_paths[0], return_logits=False)
 
     timer = CustomTimer()
 
@@ -192,10 +215,23 @@ def main():
     test_numpy_single(model, image_paths, output_dir)
     timer.stop(len_dataset=len(image_paths))
 
-    print("Running Variant 3: Numpy Batch (size=2)")
+    print("Running Variant 3: Tensor Single")
+    timer.start()
+    test_tensor_single(model, image_paths, output_dir)
+    timer.stop(len_dataset=len(image_paths))
+
+    print("Running Variant 4: Numpy Batch (size=2)")
     timer.start()
     test_numpy_batch(model, image_paths, output_dir, batch_size=2)
     timer.stop(len_dataset=len(image_paths))
+
+    print("Running Variant 5: Tensor Batch (size=2)")
+    timer.start()
+    test_tensor_batch(model, image_paths, output_dir, batch_size=2)
+    timer.stop(len_dataset=len(image_paths))
+
+    peak_memory_gb = torch.cuda.max_memory_allocated() / 1024 ** 3
+    print(f'Peak GPU memory allocated: {peak_memory_gb:.2f} GB')
 
     print("All tests completed successfully.")
 

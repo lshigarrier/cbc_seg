@@ -44,8 +44,8 @@ min_polygon_area: 250.0
 edge_margin: 5
 # ================================================================================
 ## positioning
-input_dir: C:\Users\Admin\Data\tests_dmi\2026_09_01\route_parking
-output_dir: C:\Users\Admin\Data\tests_dmi\2026_09_01\route_parking_output
+input_dir: C:\Users\Admin\Data\tests_acquistion\2026_09_09\apres_midi\planche
+output_dir: C:\Users\Admin\Data\tests_acquistion\2026_09_09\apres_midi\planche
 generate_cog: true
 read_csv: false
 apply_correction: false
@@ -61,8 +61,8 @@ method: range
 gps_error_variance: 0.5
 vehicle_step: 1.3  # in meters
 # image dimension
-downscale_factor: 0.25
-span_width: 2.95  # in meters
+downscale_factor: 0.1
+span_width: 2.9  # in meters
 # COG
 merge_window_size: 2048
 # display detections

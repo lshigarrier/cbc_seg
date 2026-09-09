@@ -15,19 +15,13 @@ Example command to run the script:
     python example_cbc_pidnet_large.py
 """
 
-import os
 import time
 import cv2
+import torch
 import numpy as np
 from pathlib import Path
 
-try:
-    import torch
-    os.add_dll_directory(os.path.join(os.path.dirname(torch.__file__), 'lib'))
-except ImportError:
-    torch = None
-
-from cbc_pidnet_large import CBCPIDNetL
+from cbc_pidnet_large_torchscript import CBCPIDNetL
 
 
 def generate_color_palette() -> np.ndarray:
@@ -81,7 +75,7 @@ def overlay_mask(image: np.ndarray, mask: np.ndarray, alpha: float = 0.5) -> np.
 def main():
     input_image_path = Path("C:/Users/Admin/Data/test_images/NR_ADP_2514015.CA1_CA1_ADP_2514015_00000011220.jpg")
     output_dir = Path("C:/Users/Admin/Code/cbc_seg/cbc-pidnet-large/example_output")
-    model_path = Path("C:/Users/Admin/Code/cbc_seg/cbc-pidnet-large/model/cbc-pidnet-large.onnx")
+    model_path = Path("C:/Users/Admin/Code/cbc_seg/cbc-pidnet-large/model/cbc-pidnet-large.pt")
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -93,13 +87,14 @@ def main():
         patch_per_row=7,
         patch_per_col=3,
         patch_overlap=0.5,
-        device='cuda' # ONNX Runtime will automatically switch to CPU if CUDA is not available
+        device='cuda' if torch.cuda.is_available() else 'cpu'
     )
-    print("Active providers:", model.session.get_providers())
 
     # Inference
-    mask_np = model(input_image_path, is_bgr=False, return_logits=False)
-    mask_np = mask_np.astype(np.uint8)
+    mask_tensor = model(input_image_path, is_bgr=False, return_logits=False)
+
+    # Move the resulting mask to CPU and convert to numpy
+    mask_np = mask_tensor.squeeze().cpu().numpy().astype(np.uint8)
 
     # Read original image using OpenCV (BGR) and convert to RGB
     orig_img_bgr = cv2.imread(str(input_image_path))

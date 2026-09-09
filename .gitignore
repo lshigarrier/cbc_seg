@@ -1,6 +1,7 @@
 # Models / weights
 *.pth
 *.pt
+*.onnx
 
 # Python
 *__pycache__/
